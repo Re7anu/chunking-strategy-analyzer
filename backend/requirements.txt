@@ -1,0 +1,11 @@
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch
+fastapi>=0.100.0
+uvicorn[standard]>=0.20.0
+pypdf>=3.0.0
+psycopg2-binary>=2.9.0
+google-genai>=0.1.1
+python-dotenv>=1.0.0
+numpy>=1.20.0
+sentence-transformers>=2.2.0
+python-multipart>=0.0.5

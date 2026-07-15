@@ -1,0 +1,422 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NexusRAG — Customer Support Hub & Chunker Analyzer</title>
+  <!-- Google Fonts: Outfit and Inter -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <!-- FontAwesome Icons -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <!-- Custom Sleek Styling -->
+  <link rel="stylesheet" href="app.css">
+  <!-- Markdown Parser (marked.js) -->
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+</head>
+<body>
+
+  <!-- Background Glowing Orbs -->
+  <div class="glow-orb orb-1"></div>
+  <div class="glow-orb orb-2"></div>
+
+  <div class="app-container">
+    
+    <!-- Sidebar Navigation -->
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <div class="logo">
+          <i class="fa-solid fa-bolt-lightning logo-icon"></i>
+          <span>Nexus<strong>RAG</strong></span>
+        </div>
+        <p class="logo-subtitle">PostgreSQL + Hybrid Search</p>
+      </div>
+
+      <nav class="sidebar-nav">
+        <button class="nav-btn active" data-tab="chat-tab">
+          <i class="fa-solid fa-comments"></i>
+          <span>Support Chat</span>
+        </button>
+        <button class="nav-btn" data-tab="search-tab">
+          <i class="fa-solid fa-magnifying-glass-chart"></i>
+          <span>RRF Sandbox</span>
+        </button>
+        <button class="nav-btn" data-tab="ingest-tab">
+          <i class="fa-solid fa-cloud-arrow-up"></i>
+          <span>Ingest Data</span>
+        </button>
+        <button class="nav-btn" data-tab="compare-tab">
+          <i class="fa-solid fa-code-compare"></i>
+          <span>Strategy Analysis</span>
+        </button>
+      </nav>
+
+      <div class="sidebar-footer">
+        <div class="db-status">
+          <div class="status-indicator online"></div>
+          <span>Database Connected</span>
+        </div>
+        <p class="footer-details">PostgreSQL + pgvector (384d)</p>
+      </div>
+    </aside>
+
+    <!-- Main Workspace -->
+    <main class="workspace">
+      
+      <!-- TAB 1: STREAMING CHAT -->
+      <section id="chat-tab" class="tab-content active">
+        <header class="workspace-header">
+          <div>
+            <h1>Customer Support Agent</h1>
+            <p class="section-desc">Test support streaming. Context is retrieved dynamically using PostgreSQL Reciprocal Rank Fusion.</p>
+          </div>
+          <div class="header-actions">
+            <div class="selector-group">
+              <label for="chat-strategy-select"><i class="fa-solid fa-sliders"></i> Context Chunker:</label>
+              <select id="chat-strategy-select" class="theme-select">
+                <option value="all">All Strategies</option>
+                <option value="fixed-size">Fixed-Size Chunks</option>
+                <option value="recursive">Recursive Chunks</option>
+                <option value="semantic">Semantic Chunks</option>
+                <option value="page-based">Page-Based Chunks</option>
+              </select>
+            </div>
+            <button class="clear-chat-btn" id="clear-chat"><i class="fa-solid fa-trash-can"></i> Clear Chat</button>
+          </div>
+        </header>
+
+        <div class="chat-container">
+          <div class="chat-messages" id="chat-messages">
+            <!-- Welcome message -->
+            <div class="message model">
+              <div class="message-avatar">
+                <i class="fa-solid fa-robot"></i>
+              </div>
+              <div class="message-bubble">
+                <p>Hello! I am your <strong>NexusRAG</strong> Customer Support Bot. Ingest documentation, and ask me anything. I will answer based strictly on the retrieved knowledge base.</p>
+              </div>
+            </div>
+          </div>
+
+          <div class="chat-input-area">
+            <form id="chat-form">
+              <input type="text" id="chat-input" placeholder="Ask a support question... (e.g. How do I cancel my plan?)" autocomplete="off" required>
+              <button type="submit" id="chat-submit-btn" class="send-btn">
+                <i class="fa-solid fa-paper-plane"></i>
+              </button>
+            </form>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB 2: HYBRID SEARCH SANDBOX -->
+      <section id="search-tab" class="tab-content">
+        <header class="workspace-header">
+          <div>
+            <h1>RRF Hybrid Search Sandbox</h1>
+            <p class="section-desc">Visualize how Reciprocal Rank Fusion combines full-text semantic search and keyword index ranks into a single score.</p>
+          </div>
+        </header>
+
+        <div class="sandbox-container">
+          <div class="search-box-card">
+            <form id="search-form">
+              <div class="search-input-group">
+                <i class="fa-solid fa-magnifying-glass search-icon"></i>
+                <input type="text" id="search-input" placeholder="Type keywords or semantic query to test search ranking..." required>
+                <select id="search-strategy-select" class="theme-select search-select">
+                  <option value="all">All Strategies</option>
+                  <option value="fixed-size">Fixed-Size Chunks</option>
+                  <option value="recursive">Recursive Chunks</option>
+                  <option value="semantic">Semantic Chunks</option>
+                  <option value="page-based">Page-Based Chunks</option>
+                </select>
+                <button type="submit" class="search-submit-btn">Run Search</button>
+              </div>
+            </form>
+          </div>
+
+          <!-- Results Visualizer -->
+          <div class="search-results-section">
+            <div class="section-title-bar">
+              <h2>Top Retrieval Results (Limit 5)</h2>
+              <span class="results-count" id="results-count">0 chunks found</span>
+            </div>
+            
+            <div class="results-list" id="search-results">
+              <div class="empty-state">
+                <i class="fa-solid fa-chart-bar-glow"></i>
+                <p>Run a search query to visualize PostgreSQL hybrid search results.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB 3: INGESTION PIPELINE -->
+      <section id="ingest-tab" class="tab-content">
+        <header class="workspace-header">
+          <div>
+            <h1>Knowledge Base Ingestion</h1>
+            <p class="section-desc">Feed new markdown text or upload PDF documents. Content is parsed, chunked with the selected strategy, embedded and indexed.</p>
+          </div>
+        </header>
+
+        <div class="ingest-container">
+          <div class="ingest-card">
+            <form id="ingest-form">
+              
+              <div class="form-row-grid">
+                <div class="form-group">
+                  <label for="ingest-title">Document Title / Source</label>
+                  <input type="text" id="ingest-title" placeholder="e.g. Billing FAQ, Refund Policy v2" required>
+                </div>
+
+                <div class="form-group">
+                  <label for="ingest-category">Category</label>
+                  <input type="text" id="ingest-category" placeholder="e.g. Billing, Accounts, Technical">
+                </div>
+              </div>
+
+              <div class="form-group">
+                <label>Ingestion Source Mode</label>
+                <div class="radio-group">
+                  <label class="radio-label">
+                    <input type="radio" name="ingest-method" value="text" checked>
+                    <span>Raw Text / Markdown</span>
+                  </label>
+                  <label class="radio-label">
+                    <input type="radio" name="ingest-method" value="pdf">
+                    <span>PDF Document</span>
+                  </label>
+                </div>
+              </div>
+
+              <!-- Raw Text Input Field (visible by default) -->
+              <div class="form-group" id="text-input-group">
+                <label for="ingest-content">Documentation Body Text</label>
+                <textarea id="ingest-content" placeholder="Paste full articles, setup instructions, or policies here..." rows="10"></textarea>
+              </div>
+
+              <!-- PDF Upload Input Field (hidden by default) -->
+              <div class="form-group" id="pdf-input-group" style="display: none;">
+                <label>Upload PDF Document</label>
+                <div class="file-drop-zone" id="file-drop-zone">
+                  <i class="fa-solid fa-file-pdf file-icon"></i>
+                  <p>Drag & drop your PDF file here, or click to browse</p>
+                  <input type="file" id="ingest-file" accept="application/pdf" style="display: none;">
+                  <span class="file-name-display" id="file-name-display">No file selected</span>
+                </div>
+              </div>
+
+              <!-- Chunker Configuration Parameters -->
+              <div class="chunker-config-section">
+                <div class="config-section-header">
+                  <h3 class="config-title"><i class="fa-solid fa-sliders"></i> Chunker Configuration</h3>
+                  <label class="checkbox-label">
+                    <input type="checkbox" id="ingest-all-strategies">
+                    <span>Ingest under all 4 strategies simultaneously (recommended for comparison)</span>
+                  </label>
+                </div>
+                
+                <!-- Single Strategy Configurations (visible by default) -->
+                <div class="form-row-grid config-grid" id="single-strategy-config-grid">
+                  <div class="form-group">
+                    <label for="ingest-strategy">Chunking Strategy</label>
+                    <select id="ingest-strategy" class="theme-select form-select">
+                      <option value="fixed-size">Fixed-Size Character Chunker</option>
+                      <option value="recursive">Recursive Character Chunker</option>
+                      <option value="semantic">Semantic Shift Chunker (Gemini Similarity)</option>
+                      <option value="page-based">Page-by-Page Chunker (PDF Page Boundary)</option>
+                    </select>
+                  </div>
+                  <div class="form-group" id="chunk-size-group">
+                    <label for="ingest-chunk-size">Target Chunk Size (characters)</label>
+                    <input type="number" id="ingest-chunk-size" value="1000" min="100">
+                  </div>
+                  <div class="form-group" id="chunk-overlap-group">
+                    <label for="ingest-chunk-overlap">Sliding Window Overlap (characters)</label>
+                    <input type="number" id="ingest-chunk-overlap" value="200" min="0">
+                  </div>
+                  <div class="form-group" id="semantic-threshold-group" style="display: none;">
+                    <label for="ingest-threshold">Cosine Threshold (leave empty for dynamic)</label>
+                    <input type="number" id="ingest-threshold" placeholder="e.g. 0.85" min="0.5" max="1.0" step="0.01">
+                  </div>
+                </div>
+
+                <!-- Multi-Strategy Configurations (hidden by default) -->
+                <div id="multi-strategy-config-grid" class="multi-config-container" style="display: none;">
+                  <p class="multi-config-hint">Adjust individual chunking hyperparameters for each strategy below:</p>
+                  <div class="multi-config-row">
+                    <!-- Fixed-Size Card -->
+                    <div class="strat-config-card fixed-size">
+                      <div class="card-title-row">
+                        <i class="fa-solid fa-arrows-split-up-and-left"></i>
+                        <span>Fixed-Size Chunker</span>
+                      </div>
+                      <div class="card-inputs">
+                        <div class="form-group">
+                          <label for="multi-fixed-size">Chunk Size</label>
+                          <input type="number" id="multi-fixed-size" value="1000" min="100">
+                        </div>
+                        <div class="form-group">
+                          <label for="multi-fixed-overlap">Overlap</label>
+                          <input type="number" id="multi-fixed-overlap" value="200" min="0">
+                        </div>
+                      </div>
+                    </div>
+
+                    <!-- Recursive Card -->
+                    <div class="strat-config-card recursive">
+                      <div class="card-title-row">
+                        <i class="fa-solid fa-list-ol"></i>
+                        <span>Recursive Chunker</span>
+                      </div>
+                      <div class="card-inputs">
+                        <div class="form-group">
+                          <label for="multi-recursive-size">Chunk Size</label>
+                          <input type="number" id="multi-recursive-size" value="1000" min="100">
+                        </div>
+                        <div class="form-group">
+                          <label for="multi-recursive-overlap">Overlap</label>
+                          <input type="number" id="multi-recursive-overlap" value="200" min="0">
+                        </div>
+                      </div>
+                    </div>
+
+                    <!-- Semantic Card -->
+                    <div class="strat-config-card semantic">
+                      <div class="card-title-row">
+                        <i class="fa-solid fa-brain"></i>
+                        <span>Semantic Chunker</span>
+                      </div>
+                      <div class="card-inputs">
+                        <div class="form-group">
+                          <label for="multi-semantic-size">Chunk Size</label>
+                          <input type="number" id="multi-semantic-size" value="1000" min="100">
+                        </div>
+                        <div class="form-group">
+                          <label for="multi-semantic-threshold">Similarity Threshold</label>
+                          <input type="number" id="multi-semantic-threshold" placeholder="Dynamic" min="0.5" max="1.0" step="0.01">
+                        </div>
+                      </div>
+                    </div>
+
+                    <!-- Page-Based Card -->
+                    <div class="strat-config-card page-based">
+                      <div class="card-title-row">
+                        <i class="fa-solid fa-file-invoice"></i>
+                        <span>Page-Based Chunker</span>
+                      </div>
+                      <div class="card-inputs">
+                        <div class="form-group">
+                          <label for="multi-page-size">Max Size Limit</label>
+                          <input type="number" id="multi-page-size" value="1500" min="100">
+                        </div>
+                        <div class="form-group">
+                          <label for="multi-page-overlap">Sub-page Overlap</label>
+                          <input type="number" id="multi-page-overlap" value="200" min="0">
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <button type="submit" class="ingest-submit-btn" id="ingest-submit-btn">
+                <i class="fa-solid fa-circle-notch fa-spin btn-spinner" style="display:none;"></i>
+                <span>Ingest Document & Create Index</span>
+              </button>
+            </form>
+            
+            <!-- Ingest Success Alert -->
+            <div class="status-alert" id="ingest-status" style="display:none;">
+              <i class="fa-solid fa-circle-check status-alert-icon"></i>
+              <div class="status-alert-content">
+                <h4 id="status-title">Ingestion Successful!</h4>
+                <p id="status-message">Your document was successfully embedded and indexed.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB 4: STRATEGY COMPARISON ANALYSIS -->
+      <section id="compare-tab" class="tab-content">
+        <header class="workspace-header">
+          <div>
+            <h1>Strategy Analysis Dashboard</h1>
+            <p class="section-desc">Analyze how different chunking strategies affect similarity scores, RRF ranks, and match context for any support query.</p>
+          </div>
+        </header>
+
+        <div class="compare-container">
+          <div class="search-box-card">
+            <form id="compare-form">
+              <div class="search-input-group">
+                <i class="fa-solid fa-code-compare search-icon"></i>
+                <input type="text" id="compare-input" placeholder="Type a query to run a side-by-side comparative retrieval analysis..." required>
+                <button type="submit" class="search-submit-btn compare-btn">Analyze Strategies</button>
+              </div>
+            </form>
+          </div>
+
+          <!-- Comparative Columns Grid -->
+          <div class="comparison-grid-scroll">
+            <div class="comparison-grid" id="comparison-grid" style="display: none;">
+              
+              <!-- Fixed Size Column -->
+              <div class="compare-col" data-strategy="fixed-size">
+                <div class="compare-col-header">
+                  <span class="strat-pill fixed-size">Fixed-Size</span>
+                  <p class="strategy-sub">Character sliding window</p>
+                </div>
+                <div class="compare-col-results" id="compare-res-fixed-size"></div>
+              </div>
+
+              <!-- Recursive Column -->
+              <div class="compare-col" data-strategy="recursive">
+                <div class="compare-col-header">
+                  <span class="strat-pill recursive">Recursive</span>
+                  <p class="strategy-sub">Paragraph & newline split hierarchy</p>
+                </div>
+                <div class="compare-col-results" id="compare-res-recursive"></div>
+              </div>
+
+              <!-- Semantic Column -->
+              <div class="compare-col" data-strategy="semantic">
+                <div class="compare-col-header">
+                  <span class="strat-pill semantic">Semantic Shift</span>
+                  <p class="strategy-sub">Cosine distance of sentence embeddings</p>
+                </div>
+                <div class="compare-col-results" id="compare-res-semantic"></div>
+              </div>
+
+              <!-- Page-Based Column -->
+              <div class="compare-col" data-strategy="page-based">
+                <div class="compare-col-header">
+                  <span class="strat-pill page-based">Page-Based</span>
+                  <p class="strategy-sub">Physical pages of PDF document</p>
+                </div>
+                <div class="compare-col-results" id="compare-res-page-based"></div>
+              </div>
+
+            </div>
+
+            <!-- Empty State -->
+            <div class="empty-state" id="compare-empty-state">
+              <i class="fa-solid fa-square-poll-vertical empty-icon"></i>
+              <p>Type a query above and click "Analyze Strategies" to visualize side-by-side RAG chunk retrieval results.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+    </main>
+
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
