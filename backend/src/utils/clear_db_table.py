@@ -1,8 +1,8 @@
 import sys
 import os
-sys.path.append(os.getcwd())
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
-from db_client import init_db, get_db_connection, release_db_connection
+from src.db.db_client import init_db, get_db_connection, release_db_connection
 
 def clear_table():
     init_db()

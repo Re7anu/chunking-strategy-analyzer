@@ -1,12 +1,11 @@
 import os
-import time
 import psycopg2
 from psycopg2 import pool
 from dotenv import load_dotenv
 
 load_dotenv()
 
-from settings import DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME
+from src.config.settings import DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME
 
 db_pool = None
 
@@ -62,7 +61,7 @@ def init_db():
                 
                 if not exists:
                     print("Table analyzer_chunks not found or dropped. Initializing from init.sql...")
-                    sql_path = os.path.join(os.getcwd(), "init.sql")
+                    sql_path = os.path.join(os.path.dirname(__file__), "init.sql")
                     if os.path.exists(sql_path):
                         with open(sql_path, "r", encoding="utf-8") as f:
                             sql = f.read()

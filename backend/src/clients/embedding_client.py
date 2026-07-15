@@ -1,6 +1,5 @@
 from sentence_transformers import SentenceTransformer
-
-from settings import EMBEDDING_MODEL_NAME
+from src.config.settings import EMBEDDING_MODEL_NAME
 
 # Load the model locally (caches in standard HuggingFace directory)
 print(f"Loading local {EMBEDDING_MODEL_NAME} embedding model...")

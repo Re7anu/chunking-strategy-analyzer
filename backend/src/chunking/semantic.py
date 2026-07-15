@@ -1,6 +1,6 @@
 import re
 import numpy as np
-from embedding_client import get_embeddings
+from src.clients.embedding_client import get_embeddings
 
 def split_into_sentences(text: str) -> list[str]:
     """

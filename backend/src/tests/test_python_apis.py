@@ -47,10 +47,11 @@ def test_python_api():
     print("Compare strategies in response:", [c["strategy"] for c in compare_res['comparisons']])
     
     # 4. Test PDF ingestion
-    if os.path.exists("test.pdf"):
-        print("\nTesting PDF Ingestion API with test.pdf...")
+    pdf_path = os.path.join(os.path.dirname(__file__), "resources", "test.pdf")
+    if os.path.exists(pdf_path):
+        print(f"\nTesting PDF Ingestion API with {pdf_path}...")
         url_pdf = "http://localhost:3000/api/ingest-pdf"
-        with open("test.pdf", "rb") as f:
+        with open(pdf_path, "rb") as f:
             files = {"file": ("test.pdf", f, "application/pdf")}
             data = {
                 "title": "Bitcoin Whitepaper Proof",
@@ -64,6 +65,8 @@ def test_python_api():
         print(f"PDF Ingest status: {r_pdf.status_code}")
         print(f"PDF Ingest response: {r_pdf.json()}")
         assert r_pdf.status_code == 200, "PDF Ingest failed"
+    else:
+        print(f"\nWARNING: test.pdf not found at {pdf_path}. Skipping PDF ingestion test.")
 
     print("\n--- ALL PYTHON ENDPOINT VERIFICATIONS PASSED ---")
 

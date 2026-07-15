@@ -1,7 +1,7 @@
-from chunking.fixed_size import chunk_fixed_size
-from chunking.recursive import chunk_recursive
-from chunking.semantic import chunk_semantic
-from chunking.page_based import chunk_page_based
+from src.chunking.fixed_size import chunk_fixed_size
+from src.chunking.recursive import chunk_recursive
+from src.chunking.semantic import chunk_semantic
+from src.chunking.page_based import chunk_page_based
 
 def chunk_document(text: str, options: dict) -> list[dict]:
     """

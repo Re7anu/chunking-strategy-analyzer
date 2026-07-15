@@ -3,7 +3,8 @@ from google import genai
 from google.genai import types
 from dotenv import load_dotenv
 
-from settings import CHAT_MODEL_NAME
+from src.config.settings import CHAT_MODEL_NAME, CHAT_TEMPERATURE
+from src.prompts import RAG_SYSTEM_INSTRUCTION_TEMPLATE
 
 load_dotenv()
 
@@ -16,7 +17,7 @@ client = genai.Client(api_key=api_key)
 
 def get_chat_stream(question: str, context: str, history: list = None):
     """
-    Generates a streaming response for the customer support chat using gemini-2.5-flash.
+    Generates a streaming response for the customer support chat using Gemini models.
     """
     if history is None:
         history = []
@@ -35,11 +36,7 @@ def get_chat_stream(question: str, context: str, history: list = None):
         )
 
     # Context-enhanced system instruction
-    system_instruction = f"""You are a helpful, professional, and empathetic customer support agent.
-Your goal is to answer the user's question accurately using only the provided context.
-
-Context:
-{context}"""
+    system_instruction = RAG_SYSTEM_INSTRUCTION_TEMPLATE.format(context=context)
 
     # Append current question
     contents.append(
@@ -55,6 +52,6 @@ Context:
         contents=contents,
         config=types.GenerateContentConfig(
             system_instruction=system_instruction,
-            temperature=0.3
+            temperature=CHAT_TEMPERATURE
         )
     )

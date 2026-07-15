@@ -1,11 +1,11 @@
 import sys
 import os
-sys.path.append(os.getcwd())
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
-from chunking.fixed_size import chunk_fixed_size
-from chunking.recursive import chunk_recursive
-from chunking.page_based import chunk_page_based
-from chunking.router import chunk_document
+from src.chunking.fixed_size import chunk_fixed_size
+from src.chunking.recursive import chunk_recursive
+from src.chunking.page_based import chunk_page_based
+from src.chunker_manager import chunk_document
 
 def test_chunkers():
     test_text = "This is a simple text segment. It contains multiple sentences. Let's see if we can chunk it properly."

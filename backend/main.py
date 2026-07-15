@@ -10,18 +10,17 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from db_client import init_db, get_db_connection, release_db_connection
-from gemini_client import get_chat_stream
-from embedding_client import get_embedding, get_embeddings
-from chunking.router import chunk_document
+from src.config import settings
+from src.db.db_client import init_db, get_db_connection, release_db_connection
+from src.clients.gemini_client import get_chat_stream
+from src.clients.embedding_client import get_embedding, get_embeddings
+from src.chunker_manager import chunk_document
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Initialize connection pool on startup
     init_db()
     yield
-    # Cleanup pool on shutdown if needed
-    # (FastAPI lifecycle handles general termination)
 
 app = FastAPI(lifespan=lifespan)
 
@@ -39,14 +38,10 @@ async def api_ingest(request: Request):
         content = body.get("content")
         metadata = body.get("metadata", {})
         strategy = body.get("strategy", "fixed-size")
-        chunk_size = body.get("chunkSize", 1000)
-        chunk_overlap = body.get("chunkOverlap", 200)
-        semantic_threshold = body.get("semanticThreshold")
+        chunk_size = body.get("chunkSize", settings.DEFAULT_CHUNK_SIZE)
+        chunk_overlap = body.get("chunkOverlap", settings.DEFAULT_CHUNK_OVERLAP)
+        semantic_threshold = body.get("semanticThreshold", settings.DEFAULT_SEMANTIC_THRESHOLD)
         ingest_all_strategies = body.get("ingestAllStrategies", False)
-        configs = body.get("configs", {})
-        
-        if not content or not isinstance(content, str):
-            raise HTTPException(status_code=400, detail="Missing or invalid 'content' in request body.")
 
         # Cast parameters
         parsed_chunk_size = int(chunk_size)
@@ -66,7 +61,7 @@ async def api_ingest(request: Request):
             with conn.cursor() as cur:
                 for strat in strategies_to_run:
                     # Apply strategy-specific parameter overrides
-                    strat_config = configs.get(strat, {})
+                    strat_config = configs.get(strat, {}) if 'configs' in locals() else {}
                     strat_chunk_size = int(strat_config.get("chunkSize", parsed_chunk_size))
                     strat_chunk_overlap = int(strat_config.get("chunkOverlap", parsed_chunk_overlap))
                     
@@ -89,7 +84,7 @@ async def api_ingest(request: Request):
                         }
                     })
 
-                    print(f"Ingesting raw text: Split into {len(chunks)} chunks using strategy '{strat}' (size={strat_chunk_size}).")
+                    print(f"PDF Chunking complete: Split into {len(chunks)} chunks using '{strat}' (size={strat_chunk_size}).")
                     
                     if chunks:
                         # Batch generate embeddings
@@ -128,8 +123,8 @@ async def api_ingest_pdf(
     title: str = Form("Uploaded PDF"),
     category: str = Form("General"),
     strategy: str = Form("fixed-size"),
-    chunkSize: str = Form("1000"),
-    chunkOverlap: str = Form("200"),
+    chunkSize: str = Form(str(settings.DEFAULT_CHUNK_SIZE)),
+    chunkOverlap: str = Form(str(settings.DEFAULT_CHUNK_OVERLAP)),
     semanticThreshold: str = Form(None),
     ingestAllStrategies: str = Form("false"),
     configs: str = Form(None)
@@ -528,6 +523,6 @@ async def api_chat(request: Request):
         raise HTTPException(status_code=500, detail=f"Chat failed: {str(e)}")
 
 
-# Mount public static files directory at the root /
-# This automatically serves index.html, app.css, app.js
-app.mount("/", StaticFiles(directory="public", html=True), name="public")
+# Mount frontend static files directory dynamically using absolute paths
+frontend_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "frontend"))
+app.mount("/", StaticFiles(directory=frontend_dir, html=True), name="frontend")

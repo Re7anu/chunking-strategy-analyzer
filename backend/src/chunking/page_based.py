@@ -1,4 +1,4 @@
-from chunking.recursive import RecursiveCharacterSplitter
+from src.chunking.recursive import RecursiveCharacterSplitter
 
 def chunk_page_based(
     pages: list[dict], 
