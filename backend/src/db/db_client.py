@@ -1,9 +1,6 @@
 import os
 import psycopg2
 from psycopg2 import pool
-from dotenv import load_dotenv
-
-load_dotenv()
 
 from src.config.settings import DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME
 

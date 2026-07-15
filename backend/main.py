@@ -6,9 +6,6 @@ from fastapi import FastAPI, Request, Response, UploadFile, File, Form, HTTPExce
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import StreamingResponse
 from pypdf import PdfReader
-from dotenv import load_dotenv
-
-load_dotenv()
 
 from src.config import settings
 from src.db.db_client import init_db, get_db_connection, release_db_connection
