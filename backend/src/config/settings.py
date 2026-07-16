@@ -24,3 +24,8 @@ DEFAULT_SEMANTIC_THRESHOLD = None
 # API Keys & Credentials
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
+# Qdrant Configurations
+QDRANT_HOST = os.getenv("QDRANT_HOST", "localhost")
+QDRANT_PORT = os.getenv("QDRANT_PORT", "6333")
+
+

@@ -1,6 +1,7 @@
 import os
 import io
 import json
+import uuid
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, Response, UploadFile, File, Form, HTTPException
 from fastapi.staticfiles import StaticFiles
@@ -9,25 +10,106 @@ from pypdf import PdfReader
 
 from src.config import settings
 from src.db.db_client import init_db, get_db_connection, release_db_connection
+from src.db.qdrant_client import init_qdrant, get_qdrant_client
+from qdrant_client.http import models as qdrant_models
 from src.clients.gemini_client import get_chat_stream
 from src.clients.embedding_client import get_embedding, get_embeddings
 from src.chunker_manager import chunk_document
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Initialize connection pool on startup
+    # Initialize PostgreSQL connection pool and Qdrant vector store on startup
     init_db()
+    init_qdrant()
     yield
 
 app = FastAPI(lifespan=lifespan)
 
 # Note: API routes MUST be registered before mounting StaticFiles at "/" to prevent path collisions.
 
+def run_hybrid_search(query: str, strategy: str = "all", limit: int = 5) -> list[dict]:
+    """
+    Simulates a hybrid Reciprocal Rank Fusion (RRF) search on Qdrant
+    by performing a dense vector search and calculating lexical rank counts in memory.
+    """
+    query_embedding = get_embedding(query)
+    q_client = get_qdrant_client()
+    
+    query_filter = None
+    if strategy != "all":
+        query_filter = qdrant_models.Filter(
+            must=[
+                qdrant_models.FieldCondition(
+                    key="strategy",
+                    match=qdrant_models.MatchValue(value=strategy)
+                )
+            ]
+        )
+        
+    response = q_client.query_points(
+        collection_name="analyzer_chunks",
+        query=query_embedding,
+        query_filter=query_filter,
+        limit=50,
+        with_payload=True
+    )
+    hits = response.points
+    
+    # Track semantic ranks
+    semantic_ranks = {hit.id: idx + 1 for idx, hit in enumerate(hits)}
+    
+    # Calculate simple word matching lexical scores for keyword ranks
+    query_tokens = [w.lower() for w in query.split() if len(w) > 2]
+    def get_keyword_score(text):
+        if not query_tokens:
+            return 0
+        text_lower = text.lower()
+        score = 0
+        for token in query_tokens:
+            score += text_lower.count(token)
+        return score
+
+    hits_with_keyword = []
+    for hit in hits:
+        content = hit.payload.get("content", "")
+        score = get_keyword_score(content)
+        hits_with_keyword.append((hit, score))
+
+    # Sort candidates by lexical matches
+    hits_sorted_by_keyword = sorted(hits_with_keyword, key=lambda x: x[1], reverse=True)
+    keyword_ranks = {item[0].id: idx + 1 for idx, item in enumerate(hits_sorted_by_keyword) if item[1] > 0}
+
+    # Perform Reciprocal Rank Fusion (RRF)
+    rrf_results = []
+    for hit in hits:
+        sem_rank = semantic_ranks[hit.id]
+        key_rank = keyword_ranks.get(hit.id, 9999)  # Assign default rank if no match
+        
+        rrf_score = (1.0 / (60 + sem_rank)) + (1.0 / (60 + key_rank) if key_rank != 9999 else 0.0)
+        
+        payload = hit.payload.copy()
+        content = payload.pop("content", "")
+        
+        rrf_results.append({
+            "id": hit.id,
+            "content": content,
+            "metadata": payload,
+            "semanticRank": sem_rank,
+            "keywordRank": key_rank if key_rank != 9999 else None,
+            "rrfScore": rrf_score,
+            "similarity": hit.score
+        })
+
+    # Sort final records by RRF score descending
+    rrf_results.sort(key=lambda x: x["rrfScore"], reverse=True)
+    return rrf_results[:limit]
+
+
 @app.post("/api/ingest")
 async def api_ingest(request: Request):
     """
     POST /api/ingest
-    Ingests raw text, chunks it, generates embeddings, and saves to PostgreSQL.
+    Ingests raw text, chunks it, generates embeddings, and saves to Qdrant.
     Supports single strategy or all strategies simultaneously.
     """
     try:
@@ -39,6 +121,7 @@ async def api_ingest(request: Request):
         chunk_overlap = body.get("chunkOverlap", settings.DEFAULT_CHUNK_OVERLAP)
         semantic_threshold = body.get("semanticThreshold", settings.DEFAULT_SEMANTIC_THRESHOLD)
         ingest_all_strategies = body.get("ingestAllStrategies", False)
+        configs = body.get("configs", {})
 
         # Cast parameters
         parsed_chunk_size = int(chunk_size)
@@ -52,57 +135,64 @@ async def api_ingest(request: Request):
         )
 
         total_chunks = 0
-        conn = get_db_connection()
+        q_client = get_qdrant_client()
         
-        try:
-            with conn.cursor() as cur:
-                for strat in strategies_to_run:
-                    # Apply strategy-specific parameter overrides
-                    strat_config = configs.get(strat, {}) if 'configs' in locals() else {}
-                    strat_chunk_size = int(strat_config.get("chunkSize", parsed_chunk_size))
-                    strat_chunk_overlap = int(strat_config.get("chunkOverlap", parsed_chunk_overlap))
+        for strat in strategies_to_run:
+            # Apply strategy-specific parameter overrides
+            strat_config = configs.get(strat, {})
+            strat_chunk_size = int(strat_config.get("chunkSize", parsed_chunk_size))
+            strat_chunk_overlap = int(strat_config.get("chunkOverlap", parsed_chunk_overlap))
+            
+            strat_threshold = strat_config.get("semanticThreshold", parsed_threshold)
+            if strat_threshold == "":
+                strat_threshold = None
+            else:
+                strat_threshold = float(strat_threshold) if strat_threshold is not None else None
+
+            chunks = chunk_document(content, {
+                "strategy": strat,
+                "chunk_size": strat_chunk_size,
+                "chunk_overlap": strat_chunk_overlap,
+                "semantic_threshold": strat_threshold,
+                "base_metadata": {
+                    "title": metadata.get("title", "Untitled Raw Text"),
+                    "category": metadata.get("category", "General"),
+                    "strategy": strat,
+                    "dateAdded": metadata.get("dateAdded", "")
+                }
+            })
+
+            print(f"Text Chunking complete: Split into {len(chunks)} chunks using '{strat}' (size={strat_chunk_size}).")
+            
+            if chunks:
+                # Batch generate embeddings
+                contents = [c["content"] for c in chunks]
+                embeddings = get_embeddings(contents)
+
+                points = []
+                for i, chunk in enumerate(chunks):
+                    embedding = embeddings[i]
+                    point_id = str(uuid.uuid4())
                     
-                    strat_threshold = strat_config.get("semanticThreshold", parsed_threshold)
-                    if strat_threshold == "":
-                        strat_threshold = None
-                    else:
-                        strat_threshold = float(strat_threshold) if strat_threshold is not None else None
-
-                    chunks = chunk_document(content, {
-                        "strategy": strat,
-                        "chunk_size": strat_chunk_size,
-                        "chunk_overlap": strat_chunk_overlap,
-                        "semantic_threshold": strat_threshold,
-                        "base_metadata": {
-                            "title": metadata.get("title", "Untitled Raw Text"),
-                            "category": metadata.get("category", "General"),
-                            "strategy": strat,
-                            "dateAdded": metadata.get("dateAdded", "")
-                        }
-                    })
-
-                    print(f"PDF Chunking complete: Split into {len(chunks)} chunks using '{strat}' (size={strat_chunk_size}).")
+                    payload = {
+                        "content": chunk["content"],
+                        **chunk["metadata"]
+                    }
                     
-                    if chunks:
-                        # Batch generate embeddings
-                        contents = [c["content"] for c in chunks]
-                        embeddings = get_embeddings(contents)
-
-                        for i, chunk in enumerate(chunks):
-                            embedding = embeddings[i]
-                            pg_vector_str = f"[{','.join(map(str, embedding))}]"
-                            
-                            cur.execute(
-                                """
-                                INSERT INTO analyzer_chunks (content, embedding, metadata)
-                                VALUES (%s, %s, %s)
-                                """,
-                                (chunk["content"], pg_vector_str, json.dumps(chunk["metadata"]))
-                            )
-                        total_chunks += len(chunks)
-                conn.commit()
-        finally:
-            release_db_connection(conn)
+                    points.append(
+                        qdrant_models.PointStruct(
+                            id=point_id,
+                            vector=embedding,
+                            payload=payload
+                        )
+                    )
+                
+                # Batch upsert points to Qdrant vector store
+                q_client.upsert(
+                    collection_name="analyzer_chunks",
+                    points=points
+                )
+                total_chunks += len(chunks)
 
         return {
             "success": True,
@@ -128,7 +218,7 @@ async def api_ingest_pdf(
 ):
     """
     POST /api/ingest-pdf
-    Accepts PDF upload, parses text page-by-page, chunks it, generates embeddings, and saves to database.
+    Accepts PDF upload, parses text page-by-page, chunks it, generates embeddings, and saves to Qdrant.
     """
     try:
         # Cast types
@@ -164,59 +254,66 @@ async def api_ingest_pdf(
         )
 
         total_chunks = 0
-        conn = get_db_connection()
+        q_client = get_qdrant_client()
         
-        try:
-            with conn.cursor() as cur:
-                for strat in strategies_to_run:
-                    # Apply strategy-specific parameter overrides
-                    strat_config = parsed_configs.get(strat, {})
-                    strat_chunk_size = int(strat_config.get("chunkSize", parsed_chunk_size))
-                    strat_chunk_overlap = int(strat_config.get("chunkOverlap", parsed_chunk_overlap))
+        for strat in strategies_to_run:
+            # Apply strategy-specific parameter overrides
+            strat_config = parsed_configs.get(strat, {})
+            strat_chunk_size = int(strat_config.get("chunkSize", parsed_chunk_size))
+            strat_chunk_overlap = int(strat_config.get("chunkOverlap", parsed_chunk_overlap))
+            
+            strat_threshold = strat_config.get("semanticThreshold", parsed_threshold)
+            if strat_threshold == "":
+                strat_threshold = None
+            else:
+                strat_threshold = float(strat_threshold) if strat_threshold is not None else None
+
+            chunks = chunk_document(full_text, {
+                "strategy": strat,
+                "chunk_size": strat_chunk_size,
+                "chunk_overlap": strat_chunk_overlap,
+                "semantic_threshold": strat_threshold,
+                "pages": pages,
+                "base_metadata": {
+                    "title": title,
+                    "category": category,
+                    "source": file.filename,
+                    "strategy": strat,
+                    "dateAdded": ""
+                }
+            })
+
+            print(f"PDF Chunking complete: Split into {len(chunks)} chunks using '{strat}' (size={strat_chunk_size}).")
+            
+            if chunks:
+                # Batch generate embeddings
+                contents = [c["content"] for c in chunks]
+                embeddings = get_embeddings(contents)
+
+                points = []
+                for i, chunk in enumerate(chunks):
+                    embedding = embeddings[i]
+                    point_id = str(uuid.uuid4())
                     
-                    strat_threshold = strat_config.get("semanticThreshold", parsed_threshold)
-                    if strat_threshold == "":
-                        strat_threshold = None
-                    else:
-                        strat_threshold = float(strat_threshold) if strat_threshold is not None else None
-
-                    chunks = chunk_document(full_text, {
-                        "strategy": strat,
-                        "chunk_size": strat_chunk_size,
-                        "chunk_overlap": strat_chunk_overlap,
-                        "semantic_threshold": strat_threshold,
-                        "pages": pages,
-                        "base_metadata": {
-                            "title": title,
-                            "category": category,
-                            "source": file.filename,
-                            "strategy": strat,
-                            "dateAdded": ""
-                        }
-                    })
-
-                    print(f"PDF Chunking complete: Split into {len(chunks)} chunks using '{strat}' (size={strat_chunk_size}).")
+                    payload = {
+                        "content": chunk["content"],
+                        **chunk["metadata"]
+                    }
                     
-                    if chunks:
-                        # Batch generate embeddings
-                        contents = [c["content"] for c in chunks]
-                        embeddings = get_embeddings(contents)
-
-                        for i, chunk in enumerate(chunks):
-                            embedding = embeddings[i]
-                            pg_vector_str = f"[{','.join(map(str, embedding))}]"
-                            
-                            cur.execute(
-                                """
-                                INSERT INTO analyzer_chunks (content, embedding, metadata)
-                                VALUES (%s, %s, %s)
-                                """,
-                                (chunk["content"], pg_vector_str, json.dumps(chunk["metadata"]))
-                            )
-                        total_chunks += len(chunks)
-                conn.commit()
-        finally:
-            release_db_connection(conn)
+                    points.append(
+                        qdrant_models.PointStruct(
+                            id=point_id,
+                            vector=embedding,
+                            payload=payload
+                        )
+                    )
+                
+                # Upsert to Qdrant
+                q_client.upsert(
+                    collection_name="analyzer_chunks",
+                    points=points
+                )
+                total_chunks += len(chunks)
 
         return {
             "success": True,
@@ -233,7 +330,7 @@ async def api_ingest_pdf(
 async def api_search(request: Request):
     """
     POST /api/search
-    Run Hybrid Reciprocal Rank Fusion (RRF) search on the database.
+    Run Hybrid search simulation with RRF on Qdrant.
     Can be filtered by a specific strategy index.
     """
     try:
@@ -244,73 +341,7 @@ async def api_search(request: Request):
         if not query or not isinstance(query, str):
             raise HTTPException(status_code=400, detail="Missing or invalid 'query' in request body.")
 
-        # 1. Generate query embedding
-        query_embedding = get_embedding(query)
-        pg_vector_str = f"[{','.join(map(str, query_embedding))}]"
-
-        # 2. Run Hybrid Search with RRF in PostgreSQL
-        # We pass query arguments using standard psycopg2 placeholder lists
-        rrf_query = """
-          WITH semantic_search AS (
-              SELECT id, ROW_NUMBER() OVER (ORDER BY min_distance) as rank
-              FROM (
-                  SELECT min(id) as id, min(embedding <=> %s) as min_distance
-                  FROM analyzer_chunks
-                  WHERE (%s = 'all' OR metadata->>'strategy' = %s)
-                  GROUP BY content
-              ) sub
-              ORDER BY min_distance
-              LIMIT 50
-          ),
-          keyword_search AS (
-              SELECT id, ROW_NUMBER() OVER (ORDER BY max_rank DESC) as rank
-              FROM (
-                  SELECT min(id) as id, max(ts_rank(fts_tokens, websearch_to_tsquery('english', %s))) as max_rank
-                  FROM analyzer_chunks
-                  WHERE fts_tokens @@ websearch_to_tsquery('english', %s)
-                    AND (%s = 'all' OR metadata->>'strategy' = %s)
-                  GROUP BY content
-              ) sub
-              ORDER BY max_rank DESC
-              LIMIT 50
-          )
-          SELECT 
-              c.id,
-              c.content,
-              c.metadata,
-              s.rank as semantic_rank,
-              k.rank as keyword_rank,
-              COALESCE(1.0 / (60 + s.rank), 0.0) + COALESCE(1.0 / (60 + k.rank), 0.0) AS rrf_score
-          FROM analyzer_chunks c
-          LEFT JOIN semantic_search s ON c.id = s.id
-          LEFT JOIN keyword_search k ON c.id = k.id
-          WHERE s.id IS NOT NULL OR k.id IS NOT NULL
-          ORDER BY rrf_score DESC
-          LIMIT 5;
-        """
-
-        params = (
-            pg_vector_str, strategy, strategy,
-            query, query, strategy, strategy
-        )
-
-        results = []
-        conn = get_db_connection()
-        try:
-            with conn.cursor() as cur:
-                cur.execute(rrf_query, params)
-                rows = cur.fetchall()
-                for row in rows:
-                    results.append({
-                        "id": row[0],
-                        "content": row[1],
-                        "metadata": row[2],
-                        "semanticRank": int(row[3]) if row[3] else None,
-                        "keywordRank": int(row[4]) if row[4] else None,
-                        "rrfScore": float(row[5])
-                    })
-        finally:
-            release_db_connection(conn)
+        results = run_hybrid_search(query, strategy=strategy, limit=5)
 
         return {
             "success": True,
@@ -335,82 +366,14 @@ async def api_compare(request: Request):
         if not query or not isinstance(query, str):
             raise HTTPException(status_code=400, detail="Missing or invalid 'query' in request body.")
 
-        query_embedding = get_embedding(query)
-        pg_vector_str = f"[{','.join(map(str, query_embedding))}]"
-
         strategies = ["fixed-size", "recursive", "semantic", "page-based"]
         comparisons = {}
 
-        conn = get_db_connection()
-        try:
-            with conn.cursor() as cur:
-                for strat in strategies:
-                    # Run search specifically filtered by this strategy
-                    compare_query = """
-                      WITH semantic_search AS (
-                          SELECT id, ROW_NUMBER() OVER (ORDER BY min_distance) as rank
-                          FROM (
-                              SELECT min(id) as id, min(embedding <=> %s) as min_distance
-                              FROM analyzer_chunks
-                              WHERE metadata->>'strategy' = %s
-                              GROUP BY content
-                          ) sub
-                          ORDER BY min_distance
-                          LIMIT 50
-                      ),
-                      keyword_search AS (
-                          SELECT id, ROW_NUMBER() OVER (ORDER BY max_rank DESC) as rank
-                          FROM (
-                              SELECT min(id) as id, max(ts_rank(fts_tokens, websearch_to_tsquery('english', %s))) as max_rank
-                              FROM analyzer_chunks
-                              WHERE fts_tokens @@ websearch_to_tsquery('english', %s)
-                                AND metadata->>'strategy' = %s
-                              GROUP BY content
-                          ) sub
-                          ORDER BY max_rank DESC
-                          LIMIT 50
-                      )
-                      SELECT 
-                          c.id,
-                          c.content,
-                          c.metadata,
-                          s.rank as semantic_rank,
-                          k.rank as keyword_rank,
-                          COALESCE(1.0 / (60 + s.rank), 0.0) + COALESCE(1.0 / (60 + k.rank), 0.0) AS rrf_score,
-                          (1.0 - (c.embedding <=> %s)) AS similarity
-                      FROM analyzer_chunks c
-                      LEFT JOIN semantic_search s ON c.id = s.id
-                      LEFT JOIN keyword_search k ON c.id = k.id
-                      WHERE s.id IS NOT NULL OR k.id IS NOT NULL
-                      ORDER BY rrf_score DESC
-                      LIMIT 3;
-                    """
-                    
-                    params = (
-                        pg_vector_str, strat,
-                        query, query, strat,
-                        pg_vector_str
-                    )
-                    
-                    cur.execute(compare_query, params)
-                    rows = cur.fetchall()
-                    
-                    strat_results = []
-                    for row in rows:
-                        strat_results.append({
-                            "id": row[0],
-                            "content": row[1],
-                            "metadata": row[2],
-                            "semanticRank": int(row[3]) if row[3] else None,
-                            "keywordRank": int(row[4]) if row[4] else None,
-                            "rrfScore": float(row[5]),
-                            "similarity": float(row[6]) if row[6] is not None else None
-                        })
-                    comparisons[strat] = strat_results
-        finally:
-            release_db_connection(conn)
+        for strat in strategies:
+            # Query Qdrant for this specific strategy
+            comparisons[strat] = run_hybrid_search(query, strategy=strat, limit=3)
 
-        # Format comparisons as a list of column objects for frontend comparisons.forEach
+        # Format comparisons as a list of column objects for frontend
         comparisons_list = []
         for strat_name, strat_results in comparisons.items():
             comparisons_list.append({
@@ -443,64 +406,17 @@ async def api_chat(request: Request):
         if not question or not isinstance(question, str):
             raise HTTPException(status_code=400, detail="Missing or invalid 'question' in request body.")
 
-        # 1. Generate query embedding
-        query_embedding = get_embedding(question)
-        pg_vector_str = f"[{','.join(map(str, query_embedding))}]"
-
-        # 2. Retrieve top 5 context chunks from database
-        rrf_query = """
-          WITH semantic_search AS (
-              SELECT id, ROW_NUMBER() OVER (ORDER BY min_distance) as rank
-              FROM (
-                  SELECT min(id) as id, min(embedding <=> %s) as min_distance
-                  FROM analyzer_chunks
-                  WHERE (%s = 'all' OR metadata->>'strategy' = %s)
-                  GROUP BY content
-              ) sub
-              ORDER BY min_distance
-              LIMIT 50
-          ),
-          keyword_search AS (
-              SELECT id, ROW_NUMBER() OVER (ORDER BY max_rank DESC) as rank
-              FROM (
-                  SELECT min(id) as id, max(ts_rank(fts_tokens, websearch_to_tsquery('english', %s))) as max_rank
-                  FROM analyzer_chunks
-                  WHERE fts_tokens @@ websearch_to_tsquery('english', %s)
-                    AND (%s = 'all' OR metadata->>'strategy' = %s)
-                  GROUP BY content
-              ) sub
-              ORDER BY max_rank DESC
-              LIMIT 50
-          )
-          SELECT c.content
-          FROM analyzer_chunks c
-          LEFT JOIN semantic_search s ON c.id = s.id
-          LEFT JOIN keyword_search k ON c.id = k.id
-          WHERE s.id IS NOT NULL OR k.id IS NOT NULL
-          ORDER BY COALESCE(1.0 / (60 + s.rank), 0.0) + COALESCE(1.0 / (60 + k.rank), 0.0) DESC
-          LIMIT 5;
-        """
-
-        params = (
-            pg_vector_str, strategy, strategy,
-            question, question, strategy, strategy
-        )
-
+        # 1. Retrieve top 5 context chunks from Qdrant using RRF
+        results = run_hybrid_search(question, strategy=strategy, limit=5)
+        
         context_blocks = []
-        conn = get_db_connection()
-        try:
-            with conn.cursor() as cur:
-                cur.execute(rrf_query, params)
-                rows = cur.fetchall()
-                for i, row in enumerate(rows):
-                    context_blocks.append(f"[Document Block {i + 1}]:\n{row[0]}")
-        finally:
-            release_db_connection(conn)
+        for i, res in enumerate(results):
+            context_blocks.append(f"[Document Block {i + 1}]:\n{res['content']}")
 
         context = "\n\n".join(context_blocks)
-        print(f"RRF Hybrid Search retrieved {len(context_blocks)} context chunks for chat.")
+        print(f"Qdrant Hybrid Search retrieved {len(context_blocks)} context chunks for chat.")
 
-        # 3. Yield streaming content formatted as Server-Sent Events
+        # 2. Yield streaming content formatted as Server-Sent Events
         def event_generator():
             try:
                 response_stream = get_chat_stream(question, context, history)
