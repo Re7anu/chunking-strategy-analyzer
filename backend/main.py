@@ -3,7 +3,7 @@ import io
 import json
 import uuid
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Request, Response, UploadFile, File, Form, HTTPException
+from fastapi import FastAPI, Request, UploadFile, File, Form, HTTPException, Depends
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import StreamingResponse
 from pypdf import PdfReader
@@ -11,14 +11,22 @@ from pypdf import PdfReader
 from src.config import settings
 from src.db.db_client import init_db, get_db_connection, release_db_connection
 from src.db.qdrant_client import qdrant_manager
+from src.auth.router import router as auth_router
+from src.auth.dependencies import get_current_user
 from qdrant_client.http import models as qdrant_models
 from src.clients.gemini_client import get_chat_stream
 from src.clients.embedding_client import get_embedding, get_embeddings
 from src.chunker_manager import chunk_document
 
+# Alias frequently-used settings for readability
+_COLLECTION = settings.QDRANT_COLLECTION_NAME
+_RRF_K = settings.QDRANT_RRF_K
+_CANDIDATES = settings.QDRANT_SEMANTIC_CANDIDATES
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Initialize PostgreSQL connection pool and Qdrant vector store on startup
+    # Initialize PostgreSQL connection pool (creates users/sessions tables) and Qdrant on startup
     init_db()
     qdrant_manager.init_qdrant()
     yield
@@ -27,69 +35,94 @@ app = FastAPI(lifespan=lifespan)
 
 # Note: API routes MUST be registered before mounting StaticFiles at "/" to prevent path collisions.
 
-def run_hybrid_search(query: str, strategy: str = "all", limit: int = 5) -> list[dict]:
+# Register auth router — provides /api/auth/register, /api/auth/login, /api/auth/logout, /api/auth/me
+app.include_router(auth_router)
+
+
+# ─── Hybrid Search Helper ─────────────────────────────────────────────────────
+
+def run_hybrid_search(
+    query: str,
+    user_id: str,
+    session_id: str,
+    strategy: str = "all",
+    limit: int = 5
+) -> list[dict]:
     """
-    Simulates a hybrid Reciprocal Rank Fusion (RRF) search on Qdrant
-    by performing a dense vector search and calculating lexical rank counts in memory.
+    Performs hybrid Reciprocal Rank Fusion (RRF) search scoped to a specific
+    user and session. Dense vector candidates are fetched from Qdrant and
+    lexical keyword ranks are calculated in memory.
     """
     query_embedding = get_embedding(query)
     q_client = qdrant_manager.client
-    
-    query_filter = None
+
+    # Always scope results to this user's session
+    must_conditions = [
+        qdrant_models.FieldCondition(
+            key="user_id",
+            match=qdrant_models.MatchValue(value=user_id)
+        ),
+        qdrant_models.FieldCondition(
+            key="session_id",
+            match=qdrant_models.MatchValue(value=session_id)
+        ),
+    ]
+
+    # Optionally narrow to a specific chunking strategy
     if strategy != "all":
-        query_filter = qdrant_models.Filter(
-            must=[
-                qdrant_models.FieldCondition(
-                    key="strategy",
-                    match=qdrant_models.MatchValue(value=strategy)
-                )
-            ]
+        must_conditions.append(
+            qdrant_models.FieldCondition(
+                key="strategy",
+                match=qdrant_models.MatchValue(value=strategy)
+            )
         )
-        
+
+    query_filter = qdrant_models.Filter(must=must_conditions)
+
     response = q_client.query_points(
-        collection_name="analyzer_chunks",
+        collection_name=_COLLECTION,
         query=query_embedding,
         query_filter=query_filter,
-        limit=50,
+        limit=_CANDIDATES,
         with_payload=True
     )
     hits = response.points
-    
+
     # Track semantic ranks
     semantic_ranks = {hit.id: idx + 1 for idx, hit in enumerate(hits)}
-    
-    # Calculate simple word matching lexical scores for keyword ranks
+
+    # Calculate simple word-matching lexical scores for keyword ranks
     query_tokens = [w.lower() for w in query.split() if len(w) > 2]
+
     def get_keyword_score(text):
         if not query_tokens:
             return 0
         text_lower = text.lower()
-        score = 0
-        for token in query_tokens:
-            score += text_lower.count(token)
-        return score
+        return sum(text_lower.count(token) for token in query_tokens)
 
-    hits_with_keyword = []
-    for hit in hits:
-        content = hit.payload.get("content", "")
-        score = get_keyword_score(content)
-        hits_with_keyword.append((hit, score))
+    hits_with_keyword = [
+        (hit, get_keyword_score(hit.payload.get("content", "")))
+        for hit in hits
+    ]
 
-    # Sort candidates by lexical matches
     hits_sorted_by_keyword = sorted(hits_with_keyword, key=lambda x: x[1], reverse=True)
-    keyword_ranks = {item[0].id: idx + 1 for idx, item in enumerate(hits_sorted_by_keyword) if item[1] > 0}
+    keyword_ranks = {
+        item[0].id: idx + 1
+        for idx, item in enumerate(hits_sorted_by_keyword)
+        if item[1] > 0
+    }
 
-    # Perform Reciprocal Rank Fusion (RRF)
+    # Reciprocal Rank Fusion (RRF)
     rrf_results = []
     for hit in hits:
         sem_rank = semantic_ranks[hit.id]
-        key_rank = keyword_ranks.get(hit.id, 9999)  # Assign default rank if no match
-        
-        rrf_score = (1.0 / (60 + sem_rank)) + (1.0 / (60 + key_rank) if key_rank != 9999 else 0.0)
-        
+        key_rank = keyword_ranks.get(hit.id, 9999)
+
+        rrf_score = (1.0 / (_RRF_K + sem_rank)) + (1.0 / (_RRF_K + key_rank) if key_rank != 9999 else 0.0)
+
         payload = hit.payload.copy()
         content = payload.pop("content", "")
-        
+
         rrf_results.append({
             "id": hit.id,
             "content": content,
@@ -100,17 +133,21 @@ def run_hybrid_search(query: str, strategy: str = "all", limit: int = 5) -> list
             "similarity": hit.score
         })
 
-    # Sort final records by RRF score descending
     rrf_results.sort(key=lambda x: x["rrfScore"], reverse=True)
     return rrf_results[:limit]
 
 
+# ─── Ingestion Routes ─────────────────────────────────────────────────────────
+
 @app.post("/api/ingest")
-async def api_ingest(request: Request):
+async def api_ingest(
+    request: Request,
+    user_context: dict = Depends(get_current_user)
+):
     """
     POST /api/ingest
-    Ingests raw text, chunks it, generates embeddings, and saves to Qdrant.
-    Supports single strategy or all strategies simultaneously.
+    Ingests raw text, chunks it with the selected strategy, embeds it,
+    and upserts into Qdrant tagged with the current user and session.
     """
     try:
         body = await request.json()
@@ -123,10 +160,13 @@ async def api_ingest(request: Request):
         ingest_all_strategies = body.get("ingestAllStrategies", False)
         configs = body.get("configs", {})
 
-        # Cast parameters
         parsed_chunk_size = int(chunk_size)
         parsed_chunk_overlap = int(chunk_overlap)
-        parsed_threshold = float(semantic_threshold) if (semantic_threshold is not None and semantic_threshold != "") else None
+        parsed_threshold = (
+            float(semantic_threshold)
+            if (semantic_threshold is not None and semantic_threshold != "")
+            else None
+        )
 
         strategies_to_run = (
             ["fixed-size", "recursive", "semantic", "page-based"]
@@ -136,13 +176,14 @@ async def api_ingest(request: Request):
 
         total_chunks = 0
         q_client = qdrant_manager.client
-        
+        user_id = user_context["user_id"]
+        session_id = user_context["session_id"]
+
         for strat in strategies_to_run:
-            # Apply strategy-specific parameter overrides
             strat_config = configs.get(strat, {})
             strat_chunk_size = int(strat_config.get("chunkSize", parsed_chunk_size))
             strat_chunk_overlap = int(strat_config.get("chunkOverlap", parsed_chunk_overlap))
-            
+
             strat_threshold = strat_config.get("semanticThreshold", parsed_threshold)
             if strat_threshold == "":
                 strat_threshold = None
@@ -158,40 +199,32 @@ async def api_ingest(request: Request):
                     "title": metadata.get("title", "Untitled Raw Text"),
                     "category": metadata.get("category", "General"),
                     "strategy": strat,
-                    "dateAdded": metadata.get("dateAdded", "")
+                    "dateAdded": metadata.get("dateAdded", ""),
+                    "user_id": user_id,
+                    "session_id": session_id,
                 }
             })
 
             print(f"Text Chunking complete: Split into {len(chunks)} chunks using '{strat}' (size={strat_chunk_size}).")
-            
+
             if chunks:
-                # Batch generate embeddings
                 contents = [c["content"] for c in chunks]
                 embeddings = get_embeddings(contents)
 
                 points = []
                 for i, chunk in enumerate(chunks):
-                    embedding = embeddings[i]
-                    point_id = str(uuid.uuid4())
-                    
-                    payload = {
-                        "content": chunk["content"],
-                        **chunk["metadata"]
-                    }
-                    
                     points.append(
                         qdrant_models.PointStruct(
-                            id=point_id,
-                            vector=embedding,
-                            payload=payload
+                            id=str(uuid.uuid4()),
+                            vector=embeddings[i],
+                            payload={
+                                "content": chunk["content"],
+                                **chunk["metadata"]
+                            }
                         )
                     )
-                
-                # Batch upsert points to Qdrant vector store
-                q_client.upsert(
-                    collection_name="analyzer_chunks",
-                    points=points
-                )
+
+                q_client.upsert(collection_name=_COLLECTION, points=points)
                 total_chunks += len(chunks)
 
         return {
@@ -214,37 +247,35 @@ async def api_ingest_pdf(
     chunkOverlap: str = Form(str(settings.DEFAULT_CHUNK_OVERLAP)),
     semanticThreshold: str = Form(None),
     ingestAllStrategies: str = Form("false"),
-    configs: str = Form(None)
+    configs: str = Form(None),
+    user_context: dict = Depends(get_current_user)
 ):
     """
     POST /api/ingest-pdf
-    Accepts PDF upload, parses text page-by-page, chunks it, generates embeddings, and saves to Qdrant.
+    Accepts PDF upload, extracts text, chunks it, embeds it, and upserts to Qdrant
+    scoped to the current user and session.
     """
     try:
-        # Cast types
         parsed_chunk_size = int(chunkSize)
         parsed_chunk_overlap = int(chunkOverlap)
-        parsed_threshold = float(semanticThreshold) if (semanticThreshold and semanticThreshold.strip()) else None
+        parsed_threshold = (
+            float(semanticThreshold) if (semanticThreshold and semanticThreshold.strip()) else None
+        )
         ingest_all = ingestAllStrategies.lower() == "true"
         parsed_configs = json.loads(configs) if (configs and configs.strip()) else {}
 
         print(f"Parsing uploaded PDF '{file.filename}'...")
         file_bytes = await file.read()
-        
-        # Load PDF using PyPDF Reader
+
         reader = PdfReader(io.BytesIO(file_bytes))
         pages = []
         for i, page in enumerate(reader.pages):
             text = page.extract_text() or ""
-            pages.append({
-                "number": i + 1,
-                "text": text
-            })
-            
-        # Sort pages numerically just in case
+            pages.append({"number": i + 1, "text": text})
+
         pages.sort(key=lambda p: p["number"])
         full_text = "\n\n".join([p["text"] for p in pages])
-        
+
         print(f"PDF parsed successfully. Total pages: {len(pages)}. Character count: {len(full_text)}.")
 
         strategies_to_run = (
@@ -255,13 +286,14 @@ async def api_ingest_pdf(
 
         total_chunks = 0
         q_client = qdrant_manager.client
-        
+        user_id = user_context["user_id"]
+        session_id = user_context["session_id"]
+
         for strat in strategies_to_run:
-            # Apply strategy-specific parameter overrides
             strat_config = parsed_configs.get(strat, {})
             strat_chunk_size = int(strat_config.get("chunkSize", parsed_chunk_size))
             strat_chunk_overlap = int(strat_config.get("chunkOverlap", parsed_chunk_overlap))
-            
+
             strat_threshold = strat_config.get("semanticThreshold", parsed_threshold)
             if strat_threshold == "":
                 strat_threshold = None
@@ -279,40 +311,32 @@ async def api_ingest_pdf(
                     "category": category,
                     "source": file.filename,
                     "strategy": strat,
-                    "dateAdded": ""
+                    "dateAdded": "",
+                    "user_id": user_id,
+                    "session_id": session_id,
                 }
             })
 
             print(f"PDF Chunking complete: Split into {len(chunks)} chunks using '{strat}' (size={strat_chunk_size}).")
-            
+
             if chunks:
-                # Batch generate embeddings
                 contents = [c["content"] for c in chunks]
                 embeddings = get_embeddings(contents)
 
                 points = []
                 for i, chunk in enumerate(chunks):
-                    embedding = embeddings[i]
-                    point_id = str(uuid.uuid4())
-                    
-                    payload = {
-                        "content": chunk["content"],
-                        **chunk["metadata"]
-                    }
-                    
                     points.append(
                         qdrant_models.PointStruct(
-                            id=point_id,
-                            vector=embedding,
-                            payload=payload
+                            id=str(uuid.uuid4()),
+                            vector=embeddings[i],
+                            payload={
+                                "content": chunk["content"],
+                                **chunk["metadata"]
+                            }
                         )
                     )
-                
-                # Upsert to Qdrant
-                q_client.upsert(
-                    collection_name="analyzer_chunks",
-                    points=points
-                )
+
+                q_client.upsert(collection_name=_COLLECTION, points=points)
                 total_chunks += len(chunks)
 
         return {
@@ -326,12 +350,16 @@ async def api_ingest_pdf(
         raise HTTPException(status_code=500, detail=f"PDF Ingestion failed: {str(e)}")
 
 
+# ─── Search / Compare Routes ──────────────────────────────────────────────────
+
 @app.post("/api/search")
-async def api_search(request: Request):
+async def api_search(
+    request: Request,
+    user_context: dict = Depends(get_current_user)
+):
     """
     POST /api/search
-    Run Hybrid search simulation with RRF on Qdrant.
-    Can be filtered by a specific strategy index.
+    Hybrid RRF search scoped to the authenticated user's current session.
     """
     try:
         body = await request.json()
@@ -341,23 +369,28 @@ async def api_search(request: Request):
         if not query or not isinstance(query, str):
             raise HTTPException(status_code=400, detail="Missing or invalid 'query' in request body.")
 
-        results = run_hybrid_search(query, strategy=strategy, limit=5)
+        results = run_hybrid_search(
+            query,
+            user_id=user_context["user_id"],
+            session_id=user_context["session_id"],
+            strategy=strategy,
+            limit=settings.SEARCH_RESULT_LIMIT
+        )
 
-        return {
-            "success": True,
-            "query": query,
-            "results": results
-        }
+        return {"success": True, "query": query, "results": results}
     except Exception as e:
         print(f"Hybrid search failed: {e}")
         raise HTTPException(status_code=500, detail=f"Search failed: {str(e)}")
 
 
 @app.post("/api/compare")
-async def api_compare(request: Request):
+async def api_compare(
+    request: Request,
+    user_context: dict = Depends(get_current_user)
+):
     """
     POST /api/compare
-    Runs search query in parallel against all 4 strategies, returning lists of matched chunks.
+    Runs RRF search against all 4 strategies, scoped to the current user and session.
     """
     try:
         body = await request.json()
@@ -367,35 +400,34 @@ async def api_compare(request: Request):
             raise HTTPException(status_code=400, detail="Missing or invalid 'query' in request body.")
 
         strategies = ["fixed-size", "recursive", "semantic", "page-based"]
-        comparisons = {}
+        comparisons_list = []
 
         for strat in strategies:
-            # Query Qdrant for this specific strategy
-            comparisons[strat] = run_hybrid_search(query, strategy=strat, limit=3)
+            results = run_hybrid_search(
+                query,
+                user_id=user_context["user_id"],
+                session_id=user_context["session_id"],
+                strategy=strat,
+                limit=settings.COMPARE_RESULT_LIMIT
+            )
+            comparisons_list.append({"strategy": strat, "results": results})
 
-        # Format comparisons as a list of column objects for frontend
-        comparisons_list = []
-        for strat_name, strat_results in comparisons.items():
-            comparisons_list.append({
-                "strategy": strat_name,
-                "results": strat_results
-            })
-
-        return {
-            "success": True,
-            "query": query,
-            "comparisons": comparisons_list
-        }
+        return {"success": True, "query": query, "comparisons": comparisons_list}
     except Exception as e:
         print(f"Compare search failed: {e}")
         raise HTTPException(status_code=500, detail=f"Comparison failed: {str(e)}")
 
 
+# ─── Chat Route ───────────────────────────────────────────────────────────────
+
 @app.post("/api/chat")
-async def api_chat(request: Request):
+async def api_chat(
+    request: Request,
+    user_context: dict = Depends(get_current_user)
+):
     """
     POST /api/chat
-    Performs RRF search for the target strategy and streams chat response using SSE.
+    Retrieves context chunks for the current session and streams the Gemini response via SSE.
     """
     try:
         body = await request.json()
@@ -406,17 +438,21 @@ async def api_chat(request: Request):
         if not question or not isinstance(question, str):
             raise HTTPException(status_code=400, detail="Missing or invalid 'question' in request body.")
 
-        # 1. Retrieve top 5 context chunks from Qdrant using RRF
-        results = run_hybrid_search(question, strategy=strategy, limit=5)
-        
-        context_blocks = []
-        for i, res in enumerate(results):
-            context_blocks.append(f"[Document Block {i + 1}]:\n{res['content']}")
+        results = run_hybrid_search(
+            question,
+            user_id=user_context["user_id"],
+            session_id=user_context["session_id"],
+            strategy=strategy,
+            limit=settings.SEARCH_RESULT_LIMIT
+        )
 
+        context_blocks = [
+            f"[Document Block {i + 1}]:\n{res['content']}"
+            for i, res in enumerate(results)
+        ]
         context = "\n\n".join(context_blocks)
         print(f"Qdrant Hybrid Search retrieved {len(context_blocks)} context chunks for chat.")
 
-        # 2. Yield streaming content formatted as Server-Sent Events
         def event_generator():
             try:
                 response_stream = get_chat_stream(question, context, history)
