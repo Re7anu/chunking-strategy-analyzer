@@ -13,10 +13,12 @@ from src.db.db_client import init_db, get_db_connection, release_db_connection
 from src.db.qdrant_client import qdrant_manager
 from src.auth.router import router as auth_router
 from src.auth.dependencies import get_current_user
+from src.auth.models import UserContext
 from qdrant_client.http import models as qdrant_models
 from src.clients.gemini_client import get_chat_stream
 from src.clients.embedding_client import get_embedding, get_embeddings
 from src.chunker_manager import chunk_document
+from src.utils.financial_parser import parse_financial_pdf
 
 # Alias frequently-used settings for readability
 _COLLECTION = settings.QDRANT_COLLECTION_NAME
@@ -46,7 +48,9 @@ def run_hybrid_search(
     user_id: str,
     session_id: str,
     strategy: str = "all",
-    limit: int = 5
+    limit: int = 5,
+    fiscal_year: int = None,
+    quarter: str = None
 ) -> list[dict]:
     """
     Performs hybrid Reciprocal Rank Fusion (RRF) search scoped to a specific
@@ -67,6 +71,22 @@ def run_hybrid_search(
             match=qdrant_models.MatchValue(value=session_id)
         ),
     ]
+
+    # Apply optional year/quarter filters
+    if fiscal_year is not None:
+        must_conditions.append(
+            qdrant_models.FieldCondition(
+                key="fiscal_year",
+                match=qdrant_models.MatchValue(value=int(fiscal_year))
+            )
+        )
+    if quarter and quarter != "all" and quarter.strip() != "":
+        must_conditions.append(
+            qdrant_models.FieldCondition(
+                key="quarter",
+                match=qdrant_models.MatchValue(value=quarter)
+            )
+        )
 
     # Optionally narrow to a specific chunking strategy
     if strategy != "all":
@@ -142,7 +162,7 @@ def run_hybrid_search(
 @app.post("/api/ingest")
 async def api_ingest(
     request: Request,
-    user_context: dict = Depends(get_current_user)
+    user_context: UserContext = Depends(get_current_user)
 ):
     """
     POST /api/ingest
@@ -159,6 +179,19 @@ async def api_ingest(
         semantic_threshold = body.get("semanticThreshold", settings.DEFAULT_SEMANTIC_THRESHOLD)
         ingest_all_strategies = body.get("ingestAllStrategies", False)
         configs = body.get("configs", {})
+        fiscal_year = body.get("fiscalYear")
+        quarter = body.get("quarter")
+
+        # Convert values safely
+        if fiscal_year is not None and str(fiscal_year).strip() != "":
+            fiscal_year = int(fiscal_year)
+        else:
+            fiscal_year = None
+
+        if quarter:
+            quarter = str(quarter).strip()
+            if quarter.lower() == "all" or quarter == "":
+                quarter = None
 
         parsed_chunk_size = int(chunk_size)
         parsed_chunk_overlap = int(chunk_overlap)
@@ -176,8 +209,8 @@ async def api_ingest(
 
         total_chunks = 0
         q_client = qdrant_manager.client
-        user_id = user_context["user_id"]
-        session_id = user_context["session_id"]
+        user_id = user_context.user_id
+        session_id = user_context.session_id
 
         for strat in strategies_to_run:
             strat_config = configs.get(strat, {})
@@ -202,6 +235,8 @@ async def api_ingest(
                     "dateAdded": metadata.get("dateAdded", ""),
                     "user_id": user_id,
                     "session_id": session_id,
+                    "fiscal_year": fiscal_year,
+                    "quarter": quarter,
                 }
             })
 
@@ -248,7 +283,9 @@ async def api_ingest_pdf(
     semanticThreshold: str = Form(None),
     ingestAllStrategies: str = Form("false"),
     configs: str = Form(None),
-    user_context: dict = Depends(get_current_user)
+    fiscalYear: str = Form(None),
+    quarter: str = Form(None),
+    user_context: UserContext = Depends(get_current_user)
 ):
     """
     POST /api/ingest-pdf
@@ -267,14 +304,28 @@ async def api_ingest_pdf(
         print(f"Parsing uploaded PDF '{file.filename}'...")
         file_bytes = await file.read()
 
-        reader = PdfReader(io.BytesIO(file_bytes))
-        pages = []
-        for i, page in enumerate(reader.pages):
-            text = page.extract_text() or ""
-            pages.append({"number": i + 1, "text": text})
-
+        # Parse PDF using layout-aware financial parser (extracts text and tables as Markdown)
+        pages, auto_year, auto_quarter = parse_financial_pdf(file_bytes, file.filename)
         pages.sort(key=lambda p: p["number"])
         full_text = "\n\n".join([p["text"] for p in pages])
+
+        # Use explicitly provided year/quarter or fallback to auto-detected ones
+        final_year = None
+        if fiscalYear and fiscalYear.strip() != "":
+            try:
+                final_year = int(fiscalYear)
+            except ValueError:
+                final_year = auto_year
+        else:
+            final_year = auto_year
+
+        final_quarter = None
+        if quarter and quarter.strip() != "":
+            final_quarter = quarter.strip()
+            if final_quarter.lower() == "all":
+                final_quarter = None
+        else:
+            final_quarter = auto_quarter
 
         print(f"PDF parsed successfully. Total pages: {len(pages)}. Character count: {len(full_text)}.")
 
@@ -286,8 +337,8 @@ async def api_ingest_pdf(
 
         total_chunks = 0
         q_client = qdrant_manager.client
-        user_id = user_context["user_id"]
-        session_id = user_context["session_id"]
+        user_id = user_context.user_id
+        session_id = user_context.session_id
 
         for strat in strategies_to_run:
             strat_config = parsed_configs.get(strat, {})
@@ -314,6 +365,8 @@ async def api_ingest_pdf(
                     "dateAdded": "",
                     "user_id": user_id,
                     "session_id": session_id,
+                    "fiscal_year": final_year,
+                    "quarter": final_quarter,
                 }
             })
 
@@ -343,7 +396,9 @@ async def api_ingest_pdf(
             "success": True,
             "message": f"Successfully ingested PDF document using {', '.join(strategies_to_run)}.",
             "chunksIngested": total_chunks,
-            "pagesCount": len(pages)
+            "pagesCount": len(pages),
+            "detectedYear": final_year,
+            "detectedQuarter": final_quarter
         }
     except Exception as e:
         print(f"PDF Ingestion failed: {e}")
@@ -355,7 +410,7 @@ async def api_ingest_pdf(
 @app.post("/api/search")
 async def api_search(
     request: Request,
-    user_context: dict = Depends(get_current_user)
+    user_context: UserContext = Depends(get_current_user)
 ):
     """
     POST /api/search
@@ -365,16 +420,20 @@ async def api_search(
         body = await request.json()
         query = body.get("query")
         strategy = body.get("strategy", "all")
+        fiscal_year = body.get("fiscalYear")
+        quarter = body.get("quarter")
 
         if not query or not isinstance(query, str):
             raise HTTPException(status_code=400, detail="Missing or invalid 'query' in request body.")
 
         results = run_hybrid_search(
             query,
-            user_id=user_context["user_id"],
-            session_id=user_context["session_id"],
+            user_id=user_context.user_id,
+            session_id=user_context.session_id,
             strategy=strategy,
-            limit=settings.SEARCH_RESULT_LIMIT
+            limit=settings.SEARCH_RESULT_LIMIT,
+            fiscal_year=fiscal_year,
+            quarter=quarter
         )
 
         return {"success": True, "query": query, "results": results}
@@ -386,7 +445,7 @@ async def api_search(
 @app.post("/api/compare")
 async def api_compare(
     request: Request,
-    user_context: dict = Depends(get_current_user)
+    user_context: UserContext = Depends(get_current_user)
 ):
     """
     POST /api/compare
@@ -395,6 +454,8 @@ async def api_compare(
     try:
         body = await request.json()
         query = body.get("query")
+        fiscal_year = body.get("fiscalYear")
+        quarter = body.get("quarter")
 
         if not query or not isinstance(query, str):
             raise HTTPException(status_code=400, detail="Missing or invalid 'query' in request body.")
@@ -405,10 +466,12 @@ async def api_compare(
         for strat in strategies:
             results = run_hybrid_search(
                 query,
-                user_id=user_context["user_id"],
-                session_id=user_context["session_id"],
+                user_id=user_context.user_id,
+                session_id=user_context.session_id,
                 strategy=strat,
-                limit=settings.COMPARE_RESULT_LIMIT
+                limit=settings.COMPARE_RESULT_LIMIT,
+                fiscal_year=fiscal_year,
+                quarter=quarter
             )
             comparisons_list.append({"strategy": strat, "results": results})
 
@@ -423,7 +486,7 @@ async def api_compare(
 @app.post("/api/chat")
 async def api_chat(
     request: Request,
-    user_context: dict = Depends(get_current_user)
+    user_context: UserContext = Depends(get_current_user)
 ):
     """
     POST /api/chat
@@ -434,16 +497,20 @@ async def api_chat(
         question = body.get("question")
         history = body.get("history", [])
         strategy = body.get("strategy", "all")
+        fiscal_year = body.get("fiscalYear")
+        quarter = body.get("quarter")
 
         if not question or not isinstance(question, str):
             raise HTTPException(status_code=400, detail="Missing or invalid 'question' in request body.")
 
         results = run_hybrid_search(
             question,
-            user_id=user_context["user_id"],
-            session_id=user_context["session_id"],
+            user_id=user_context.user_id,
+            session_id=user_context.session_id,
             strategy=strategy,
-            limit=settings.SEARCH_RESULT_LIMIT
+            limit=settings.SEARCH_RESULT_LIMIT,
+            fiscal_year=fiscal_year,
+            quarter=quarter
         )
 
         context_blocks = [

@@ -607,6 +607,36 @@ h1 {
   font-weight: 600;
 }
 
+.year-tag {
+  font-size: 0.7rem;
+  background-color: rgba(245, 158, 11, 0.1);
+  color: #fbbf24;
+  border: 1px solid rgba(245, 158, 11, 0.2);
+  padding: 0.15rem 0.4rem;
+  border-radius: 4px;
+  width: max-content;
+  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  margin-top: 0.15rem;
+}
+
+.quarter-tag {
+  font-size: 0.7rem;
+  background-color: rgba(16, 185, 129, 0.1);
+  color: #34d399;
+  border: 1px solid rgba(16, 185, 129, 0.2);
+  padding: 0.15rem 0.4rem;
+  border-radius: 4px;
+  width: max-content;
+  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  margin-top: 0.15rem;
+}
+
 /* RRF Score Indicators styling */
 .rrf-score-indicator {
   display: flex;
@@ -1295,4 +1325,49 @@ h1 {
 
 .card-inputs input:focus {
   border-color: var(--accent-color);
+}
+
+/* Financial RAG Table Formatting */
+.result-card table, 
+.compare-chunk-card table, 
+.message-bubble table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1rem 0;
+  font-size: 0.85rem;
+  background-color: rgba(255, 255, 255, 0.02);
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid var(--border-color);
+}
+
+.result-card th, 
+.compare-chunk-card th, 
+.message-bubble th {
+  background-color: rgba(255, 255, 255, 0.06);
+  color: var(--text-main);
+  font-weight: 600;
+  padding: 0.6rem 0.75rem;
+  text-align: left;
+  border-bottom: 2px solid var(--border-color);
+}
+
+.result-card td, 
+.compare-chunk-card td, 
+.message-bubble td {
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--border-color);
+  color: var(--text-muted);
+}
+
+.result-card tr:last-child td, 
+.compare-chunk-card tr:last-child td, 
+.message-bubble tr:last-child td {
+  border-bottom: none;
+}
+
+.result-card tr:nth-child(even), 
+.compare-chunk-card tr:nth-child(even), 
+.message-bubble tr:nth-child(even) {
+  background-color: rgba(255, 255, 255, 0.01);
 }

@@ -172,6 +172,8 @@ function initIngestion() {
     const threshold = document.getElementById('ingest-threshold').value;
     const method = document.querySelector('input[name="ingest-method"]:checked').value;
     const ingestAllStrategies = document.getElementById('ingest-all-strategies').checked;
+    const fiscalYear = document.getElementById('ingest-year').value;
+    const quarter = document.getElementById('ingest-quarter').value;
 
     // Build strategy-specific configuration matrix for multi-ingest
     let configs = {};
@@ -224,6 +226,12 @@ function initIngestion() {
         if (threshold) {
           formData.append('semanticThreshold', threshold);
         }
+        if (fiscalYear) {
+          formData.append('fiscalYear', fiscalYear);
+        }
+        if (quarter) {
+          formData.append('quarter', quarter);
+        }
         if (ingestAllStrategies) {
           formData.append('configs', JSON.stringify(configs));
         }
@@ -246,7 +254,9 @@ function initIngestion() {
           chunkOverlap,
           semanticThreshold: threshold || undefined,
           ingestAllStrategies,
-          configs
+          configs,
+          fiscalYear: fiscalYear || undefined,
+          quarter: quarter || undefined
         };
 
         response = await fetch('/api/ingest', {
@@ -267,7 +277,11 @@ function initIngestion() {
       statusTitle.textContent = 'Ingestion Successful!';
       
       const sourceLabel = method === 'pdf' ? `PDF (${result.pagesCount} pages)` : 'raw text';
-      statusMsg.textContent = `Document "${title}" parsed as ${sourceLabel}. Generated ${result.chunksIngested} chunks using strategy "${strategy}" (Size: ${chunkSize} chars). Embedded and indexed successfully in PostgreSQL!`;
+      let detailMsg = `Document "${title}" parsed as ${sourceLabel}. Generated ${result.chunksIngested} chunks using strategy "${strategy}" (Size: ${chunkSize} chars). Embedded and indexed successfully in Qdrant!`;
+      if (result.detectedYear || result.detectedQuarter) {
+        detailMsg += ` Detected Metadata: Year: ${result.detectedYear || 'N/A'}, Quarter: ${result.detectedQuarter || 'N/A'}.`;
+      }
+      statusMsg.textContent = detailMsg;
       statusDiv.style.display = 'flex';
       
       // Reset Form fields (except Title/Category so users can batch ingest)
@@ -302,6 +316,11 @@ function initSearchSandbox() {
     e.preventDefault();
     const query = document.getElementById('search-input').value;
     const strategy = document.getElementById('search-strategy-select').value;
+    const yearSelect = document.getElementById('search-year-select').value;
+    const quarterSelect = document.getElementById('search-quarter-select').value;
+    
+    const fiscalYear = yearSelect === 'all' ? null : parseInt(yearSelect);
+    const quarter = quarterSelect === 'all' ? null : quarterSelect;
 
     resultsList.innerHTML = `
       <div class="empty-state">
@@ -314,7 +333,7 @@ function initSearchSandbox() {
       const response = await fetch('/api/search', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query, strategy })
+        body: JSON.stringify({ query, strategy, fiscalYear, quarter })
       });
 
       const result = await response.json();
@@ -361,6 +380,8 @@ function initSearchSandbox() {
               <span class="strat-tag">${stratDisplay}</span>
               <span class="doc-title-text">${metadata.title || 'Untitled Document'}</span>
               ${metadata.page ? `<span class="page-tag"><i class="fa-solid fa-file-lines"></i> Page ${metadata.page}</span>` : ''}
+              ${metadata.fiscal_year ? `<span class="year-tag"><i class="fa-solid fa-calendar"></i> ${metadata.fiscal_year}</span>` : ''}
+              ${metadata.quarter ? `<span class="quarter-tag"><i class="fa-solid fa-clock"></i> ${metadata.quarter}</span>` : ''}
             </div>
             <div class="rrf-score-indicator">
               <div class="ranks-grid">
@@ -428,6 +449,11 @@ function initChat() {
     if (!question) return;
 
     const strategy = strategySelect.value;
+    const yearSelect = document.getElementById('chat-year-select').value;
+    const quarterSelect = document.getElementById('chat-quarter-select').value;
+
+    const fiscalYear = yearSelect === 'all' ? null : parseInt(yearSelect);
+    const quarter = quarterSelect === 'all' ? null : quarterSelect;
 
     // 1. Add User Message to UI
     appendMessage('user', question);
@@ -446,7 +472,7 @@ function initChat() {
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question, history: chatHistory, strategy })
+        body: JSON.stringify({ question, history: chatHistory, strategy, fiscalYear, quarter })
       });
 
       if (!response.ok) {
@@ -613,4 +639,109 @@ function formatBytes(bytes, decimals = 1) {
   const sizes = ['Bytes', 'KB', 'MB', 'GB'];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
   return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
+}
+
+/**
+ * Comparative Ingestion Strategy Dashboard
+ */
+function initCompareDashboard() {
+  const form = document.getElementById('compare-form');
+  const emptyState = document.getElementById('compare-empty-state');
+  const compareGrid = document.getElementById('comparison-grid');
+  const strategies = ["fixed-size", "recursive", "semantic", "page-based"];
+
+  if (!form) return;
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const query = document.getElementById('compare-input').value.trim();
+    if (!query) return;
+
+    const yearSelect = document.getElementById('compare-year-select').value;
+    const quarterSelect = document.getElementById('compare-quarter-select').value;
+    const fiscalYear = yearSelect === 'all' ? null : parseInt(yearSelect);
+    const quarter = quarterSelect === 'all' ? null : quarterSelect;
+
+    // Show columns and set loading state
+    emptyState.style.display = 'none';
+    compareGrid.style.display = 'grid';
+    
+    strategies.forEach(strat => {
+      const container = document.getElementById(`compare-res-${strat}`);
+      if (container) {
+        container.innerHTML = `
+          <div class="compare-loading">
+            <i class="fa-solid fa-circle-notch fa-spin"></i>
+            <span>Searching...</span>
+          </div>
+        `;
+      }
+    });
+
+    try {
+      const response = await fetch('/api/compare', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query, fiscalYear, quarter })
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error || 'Comparison analysis failed.');
+      }
+
+      const comparisons = result.comparisons || [];
+
+      comparisons.forEach(item => {
+        const strat = item.strategy;
+        const results = item.results || [];
+        const container = document.getElementById(`compare-res-${strat}`);
+        if (!container) return;
+
+        if (results.length === 0) {
+          container.innerHTML = `
+            <div class="compare-empty-column">
+              <i class="fa-solid fa-folder-open"></i>
+              <p>No matching chunks</p>
+            </div>
+          `;
+          return;
+        }
+
+        container.innerHTML = '';
+        results.forEach(row => {
+          const card = document.createElement('div');
+          card.className = 'compare-chunk-card';
+
+          const formattedSim = row.similarity ? `${(row.similarity * 100).toFixed(0)}%` : 'N/A';
+          const rrfScoreText = row.rrfScore.toFixed(4);
+
+          card.innerHTML = `
+            <div class="compare-chunk-meta">
+              <span class="sim"><i class="fa-solid fa-brain"></i> Sim: ${formattedSim}</span>
+              <span class="rrf"><i class="fa-solid fa-arrow-down-short-wide"></i> RRF: ${rrfScoreText}</span>
+            </div>
+            <div class="compare-chunk-content">${escapeHTML(row.content)}</div>
+          `;
+
+          container.appendChild(card);
+        });
+      });
+
+    } catch (err) {
+      console.error(err);
+      strategies.forEach(strat => {
+        const container = document.getElementById(`compare-res-${strat}`);
+        if (container) {
+          container.innerHTML = `
+            <div class="compare-error-column">
+              <i class="fa-solid fa-circle-xmark"></i>
+              <p>Error loading results</p>
+            </div>
+          `;
+        }
+      });
+    }
+  });
 }
