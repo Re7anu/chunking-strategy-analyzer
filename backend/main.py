@@ -10,7 +10,7 @@ from pypdf import PdfReader
 
 from src.config import settings
 from src.db.db_client import init_db, get_db_connection, release_db_connection
-from src.db.qdrant_client import init_qdrant, get_qdrant_client
+from src.db.qdrant_client import qdrant_manager
 from qdrant_client.http import models as qdrant_models
 from src.clients.gemini_client import get_chat_stream
 from src.clients.embedding_client import get_embedding, get_embeddings
@@ -20,7 +20,7 @@ from src.chunker_manager import chunk_document
 async def lifespan(app: FastAPI):
     # Initialize PostgreSQL connection pool and Qdrant vector store on startup
     init_db()
-    init_qdrant()
+    qdrant_manager.init_qdrant()
     yield
 
 app = FastAPI(lifespan=lifespan)
@@ -33,7 +33,7 @@ def run_hybrid_search(query: str, strategy: str = "all", limit: int = 5) -> list
     by performing a dense vector search and calculating lexical rank counts in memory.
     """
     query_embedding = get_embedding(query)
-    q_client = get_qdrant_client()
+    q_client = qdrant_manager.client
     
     query_filter = None
     if strategy != "all":
@@ -135,7 +135,7 @@ async def api_ingest(request: Request):
         )
 
         total_chunks = 0
-        q_client = get_qdrant_client()
+        q_client = qdrant_manager.client
         
         for strat in strategies_to_run:
             # Apply strategy-specific parameter overrides
@@ -254,7 +254,7 @@ async def api_ingest_pdf(
         )
 
         total_chunks = 0
-        q_client = get_qdrant_client()
+        q_client = qdrant_manager.client
         
         for strat in strategies_to_run:
             # Apply strategy-specific parameter overrides
