@@ -2,7 +2,7 @@ version: '3.8'
 
 services:
   db:
-    image: pgvector/pgvector:pg16
+    image: postgres:16-alpine
     container_name: rag-postgres
     restart: always
     environment:
@@ -14,6 +14,16 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./backend/src/db/init.sql:/docker-entrypoint-initdb.d/init.sql
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: rag-qdrant
+    restart: always
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
 
   web:
     build: ./backend
@@ -27,13 +37,20 @@ services:
       - DB_USER=postgres
       - DB_PASSWORD=postgres
       - DB_NAME=rag_db
+      - QDRANT_HOST=qdrant
+      - QDRANT_PORT=6333
       - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY}
       - HF_HOME=/cache/huggingface
     depends_on:
       - db
+      - qdrant
     volumes:
       - hf_cache:/cache
+      - ./frontend:/frontend
+      - ./backend:/app
 
 volumes:
   pgdata:
+  qdrant_data:
   hf_cache:
