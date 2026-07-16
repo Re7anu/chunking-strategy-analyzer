@@ -1,8 +1,10 @@
 // Application State
 let chatHistory = [];
+let token = localStorage.getItem('token');
 
 document.addEventListener('DOMContentLoaded', () => {
   initTabs();
+  initAuthUI();
   initIngestionMode();
   initIngestion();
   initSearchSandbox();
@@ -238,6 +240,9 @@ function initIngestion() {
 
         response = await fetch('/api/ingest-pdf', {
           method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${token}`
+          },
           body: formData
         });
       } else {
@@ -261,7 +266,10 @@ function initIngestion() {
 
         response = await fetch('/api/ingest', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
           body: JSON.stringify(payload)
         });
       }
@@ -332,7 +340,10 @@ function initSearchSandbox() {
     try {
       const response = await fetch('/api/search', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
         body: JSON.stringify({ query, strategy, fiscalYear, quarter })
       });
 
@@ -471,7 +482,10 @@ function initChat() {
     try {
       const response = await fetch('/api/chat', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
         body: JSON.stringify({ question, history: chatHistory, strategy, fiscalYear, quarter })
       });
 
@@ -681,7 +695,10 @@ function initCompareDashboard() {
     try {
       const response = await fetch('/api/compare', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
         body: JSON.stringify({ query, fiscalYear, quarter })
       });
 
@@ -745,3 +762,160 @@ function initCompareDashboard() {
     }
   });
 }
+
+/**
+ * Authentication UI Controller
+ */
+function initAuthUI() {
+  const overlay = document.getElementById('auth-overlay');
+  const form = document.getElementById('auth-form-ui');
+  const emailInput = document.getElementById('auth-email');
+  const passwordInput = document.getElementById('auth-password');
+  const usernameInput = document.getElementById('auth-username');
+  const usernameGroup = document.getElementById('username-group-ui');
+  const submitBtn = document.getElementById('auth-btn-ui');
+  const toggleLink = document.getElementById('auth-toggle-link');
+  const togglePrompt = document.getElementById('auth-toggle-prompt');
+  const subtitle = document.getElementById('auth-subtitle');
+  const errorMsg = document.getElementById('auth-error-msg');
+  const logoutBtn = document.getElementById('sidebar-logout-btn');
+
+  let mode = 'login'; // or 'register'
+
+  // If already logged in, validate token
+  if (token) {
+    validateToken();
+  } else {
+    if (overlay) overlay.style.display = 'flex';
+  }
+
+  if (toggleLink) {
+    toggleLink.addEventListener('click', (e) => {
+      e.preventDefault();
+      errorMsg.style.display = 'none';
+      if (mode === 'login') {
+        mode = 'register';
+        subtitle.textContent = 'Create a new account';
+        usernameGroup.style.display = 'block';
+        usernameInput.required = true;
+        submitBtn.textContent = 'Register';
+        togglePrompt.textContent = 'Already have an account?';
+        toggleLink.textContent = 'Login here';
+      } else {
+        mode = 'login';
+        subtitle.textContent = 'Login to access your RAG Sandbox';
+        usernameGroup.style.display = 'none';
+        usernameInput.required = false;
+        submitBtn.textContent = 'Login';
+        togglePrompt.textContent = "Don't have an account?";
+        toggleLink.textContent = 'Register here';
+      }
+    });
+  }
+
+  if (form) {
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      errorMsg.style.display = 'none';
+      submitBtn.disabled = true;
+
+      const email = emailInput.value;
+      const password = passwordInput.value;
+      const username = usernameInput.value;
+
+      try {
+        let endpoint = mode === 'login' ? '/api/auth/login' : '/api/auth/register';
+        let body = mode === 'login' ? { email, password } : { username, email, password };
+
+        const res = await fetch(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        });
+
+        const data = await res.json();
+        if (!res.ok) {
+          throw new Error(data.detail || 'Authentication failed.');
+        }
+
+        // Save token and username
+        token = data.token;
+        localStorage.setItem('token', token);
+        localStorage.setItem('username', data.username || 'User');
+
+        // Hide overlay and update sidebar
+        if (overlay) overlay.style.display = 'none';
+        updateProfilePanel(data.username || 'User');
+
+      } catch (err) {
+        errorMsg.textContent = err.message;
+        errorMsg.style.display = 'block';
+      } finally {
+        submitBtn.disabled = false;
+      }
+    });
+  }
+
+  if (logoutBtn) {
+    logoutBtn.addEventListener('click', async () => {
+      try {
+        await fetch('/api/auth/logout', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${token}`
+          }
+        });
+      } catch (err) {
+        console.error('Logout request failed:', err);
+      } finally {
+        token = null;
+        localStorage.removeItem('token');
+        localStorage.removeItem('username');
+        updateProfilePanel(null);
+        if (overlay) {
+          overlay.style.display = 'flex';
+          emailInput.value = '';
+          passwordInput.value = '';
+          usernameInput.value = '';
+        }
+      }
+    });
+  }
+}
+
+async function validateToken() {
+  const overlay = document.getElementById('auth-overlay');
+  try {
+    const res = await fetch('/api/auth/me', {
+      headers: {
+        'Authorization': `Bearer ${token}`
+      }
+    });
+    if (!res.ok) throw new Error('Token invalid');
+    const data = await res.json();
+    
+    if (overlay) overlay.style.display = 'none';
+    updateProfilePanel(data.username);
+  } catch (err) {
+    console.warn('Authentication token expired or invalid:', err);
+    token = null;
+    localStorage.removeItem('token');
+    localStorage.removeItem('username');
+    updateProfilePanel(null);
+    if (overlay) overlay.style.display = 'flex';
+  }
+}
+
+function updateProfilePanel(username) {
+  const panel = document.getElementById('user-profile-panel');
+  const nameSpan = document.getElementById('sidebar-username');
+  if (panel && nameSpan) {
+    if (username) {
+      nameSpan.textContent = username;
+      panel.style.display = 'block';
+    } else {
+      panel.style.display = 'none';
+    }
+  }
+}
+
