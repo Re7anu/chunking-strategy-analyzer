@@ -1,10 +1,15 @@
 from fastapi import APIRouter, HTTPException, status, Depends
-from pydantic import BaseModel
 import bcrypt
 
 from src.auth.jwt_handler import create_token
 from src.auth.dependencies import get_current_user
-from src.config.settings import DEFAULT_SESSION_NAME
+from src.auth.models import (
+    RegisterRequest,
+    LoginRequest,
+    AuthResponse,
+    UserContext,
+    UserProfileResponse,
+)
 from src.db.user_store import (
     create_user,
     get_user_by_email,
@@ -13,26 +18,6 @@ from src.db.user_store import (
 )
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
-
-
-# ─── Request / Response Models ────────────────────────────────────────────────
-
-class RegisterRequest(BaseModel):
-    username: str
-    email: str
-    password: str
-    session_name: str = DEFAULT_SESSION_NAME
-
-class LoginRequest(BaseModel):
-    email: str
-    password: str
-    session_name: str = DEFAULT_SESSION_NAME
-
-class AuthResponse(BaseModel):
-    token: str
-    user_id: str
-    session_id: str
-    username: str
 
 
 # ─── Routes ───────────────────────────────────────────────────────────────────
@@ -88,24 +73,24 @@ def login(body: LoginRequest):
 
 
 @router.post("/logout", status_code=status.HTTP_200_OK)
-def logout(user_context: dict = Depends(get_current_user)):
+def logout(user_context: UserContext = Depends(get_current_user)):
     """
     POST /api/auth/logout
     Deletes the current session row from PostgreSQL, invalidating the token server-side.
     """
-    delete_session(user_context["session_id"])
+    delete_session(user_context.session_id)
     return {"success": True, "message": "Logged out successfully."}
 
 
-@router.get("/me")
-def me(user_context: dict = Depends(get_current_user)):
+@router.get("/me", response_model=UserProfileResponse)
+def me(user_context: UserContext = Depends(get_current_user)):
     """
     GET /api/auth/me
     Returns the current authenticated user's profile.
     """
-    return {
-        "user_id": user_context["user_id"],
-        "session_id": user_context["session_id"],
-        "username": user_context["username"],
-        "email": user_context["email"],
-    }
+    return UserProfileResponse(
+        user_id=user_context.user_id,
+        session_id=user_context.session_id,
+        username=user_context.username,
+        email=user_context.email,
+    )

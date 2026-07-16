@@ -3,6 +3,7 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import JWTError
 
 from src.auth.jwt_handler import decode_token
+from src.auth.models import UserContext
 from src.db.user_store import get_user_by_id, get_session
 
 # FastAPI's built-in Bearer token extractor
@@ -11,11 +12,11 @@ bearer_scheme = HTTPBearer()
 
 async def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme)
-) -> dict:
+) -> UserContext:
     """
     FastAPI dependency. Extracts and validates the Bearer JWT from the
-    Authorization header. Returns a context dict with user_id, session_id,
-    username, and email. Raises HTTP 401 on any failure.
+    Authorization header. Returns a UserContext Pydantic model with user_id,
+    session_id, username, and email. Raises HTTP 401 on any failure.
     """
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
@@ -47,9 +48,9 @@ async def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    return {
-        "user_id": user["id"],
-        "session_id": session["id"],
-        "username": user["username"],
-        "email": user["email"],
-    }
+    return UserContext(
+        user_id=str(user["id"]),
+        session_id=str(session["id"]),
+        username=user["username"],
+        email=user["email"],
+    )
