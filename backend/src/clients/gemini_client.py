@@ -1,20 +1,15 @@
-import os
 from google import genai
 from google.genai import types
-from dotenv import load_dotenv
 
-from src.config.settings import CHAT_MODEL_NAME, CHAT_TEMPERATURE
+from src.config.settings import GEMINI_API_KEY, CHAT_MODEL_NAME, CHAT_TEMPERATURE
 from src.prompts import RAG_SYSTEM_INSTRUCTION_TEMPLATE
 
-# Load environment variables for local testing
-load_dotenv()
-
-# Initialize Google GenAI client
-# It reads GEMINI_API_KEY from environment variables directly as originally designed
-api_key = os.getenv("GEMINI_API_KEY")
-if not api_key:
+if not GEMINI_API_KEY:
     print("WARNING: GEMINI_API_KEY environment variable is not set!")
-client = genai.Client(api_key=api_key)
+
+# Initialize Google GenAI client using the key loaded in settings.py
+client = genai.Client(api_key=GEMINI_API_KEY)
+
 
 def get_chat_stream(question: str, context: str, history: list = None):
     """
@@ -24,7 +19,7 @@ def get_chat_stream(question: str, context: str, history: list = None):
         history = []
 
     contents = []
-    
+
     # Port history objects into GenAI Content types
     # Expected history item: {"role": "user" | "model", "content": "text"}
     for msg in history:
