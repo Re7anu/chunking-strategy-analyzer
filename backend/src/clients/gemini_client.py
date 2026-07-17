@@ -51,3 +51,27 @@ def get_chat_stream(question: str, context: str, history: list = None):
             temperature=CHAT_TEMPERATURE
         )
     )
+
+def generate_conversation_title(question: str) -> str:
+    """
+    Generates a concise 3-5 word conversation title from the first question.
+    """
+    try:
+        prompt = (
+            "Generate a short, friendly, and concise title (3-5 words maximum) "
+            "for a chat thread starting with the following query. Do not use quotes or markdown formatting, "
+            f"and return ONLY the title text itself:\n\n{question}"
+        )
+        response = client.models.generate_content(
+            model=CHAT_MODEL_NAME,
+            contents=prompt
+        )
+        title = response.text.strip().replace('"', '').replace("'", "")
+        # Truncate if model hallucinates a long paragraph
+        if len(title) > 40:
+            title = title[:37] + "..."
+        return title if title else "New Chat"
+    except Exception as e:
+        print(f"Error auto-generating conversation title: {e}")
+        # Fallback to simple truncation
+        return question[:25] + "..." if len(question) > 25 else question

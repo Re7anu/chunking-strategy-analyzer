@@ -20,7 +20,7 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 # ─── Models ───────────────────────────────────────────────────────────────────
 EMBEDDING_MODEL_NAME = os.getenv("EMBEDDING_MODEL_NAME", "all-MiniLM-L6-v2")
-CHAT_MODEL_NAME = os.getenv("CHAT_MODEL_NAME", "gemini-3.5-flash")
+CHAT_MODEL_NAME = os.getenv("CHAT_MODEL_NAME", "gemini-3.1-flash-lite")
 CHAT_TEMPERATURE = float(os.getenv("CHAT_TEMPERATURE", "0.3"))
 
 # ─── Chunking ─────────────────────────────────────────────────────────────────
@@ -46,6 +46,6 @@ JWT_EXPIRY_HOURS = int(os.getenv("JWT_EXPIRY_HOURS", "24"))
 
 # ─── Session and Search Limits ────────────────────────────────────────────────
 DEFAULT_SESSION_NAME = os.getenv("DEFAULT_SESSION_NAME", "Default Session")
-SEARCH_RESULT_LIMIT = int(os.getenv("SEARCH_RESULT_LIMIT", "5"))
+SEARCH_RESULT_LIMIT = int(os.getenv("SEARCH_RESULT_LIMIT", "15"))
 COMPARE_RESULT_LIMIT = int(os.getenv("COMPARE_RESULT_LIMIT", "3"))
 
