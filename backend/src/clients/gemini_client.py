@@ -2,7 +2,7 @@ from google import genai
 from google.genai import types
 
 from src.config.settings import GEMINI_API_KEY, CHAT_MODEL_NAME, CHAT_TEMPERATURE
-from src.prompts import RAG_SYSTEM_INSTRUCTION_TEMPLATE
+from src.clients.prompts import RAG_SYSTEM_INSTRUCTION_TEMPLATE
 
 if not GEMINI_API_KEY:
     print("WARNING: GEMINI_API_KEY environment variable is not set!")
