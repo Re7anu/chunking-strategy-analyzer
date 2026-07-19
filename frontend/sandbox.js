@@ -30,7 +30,7 @@ function initSearchSandbox() {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`
         },
-        body: JSON.stringify({ query, strategy, fiscalYear, quarter, threadId: currentThreadId })
+        body: JSON.stringify({ query, strategy, fiscalYear, quarter })
       });
 
       const result = await response.json();
@@ -154,7 +154,7 @@ function initCompareDashboard() {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`
         },
-        body: JSON.stringify({ query, fiscalYear, quarter, threadId: currentThreadId })
+        body: JSON.stringify({ query, fiscalYear, quarter })
       });
 
       const result = await response.json();
