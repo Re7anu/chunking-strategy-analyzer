@@ -1,8 +1,9 @@
 import re
 from fastapi import HTTPException, status
 from src.auth.models import RegisterRequest
+from src.config.settings import EMAIL_VALIDATION_PATTERN
 
-EMAIL_REGEX = re.compile(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$")
+EMAIL_REGEX = re.compile(EMAIL_VALIDATION_PATTERN)
 
 
 def validate_registration(body: RegisterRequest):

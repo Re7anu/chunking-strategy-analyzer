@@ -49,3 +49,7 @@ DEFAULT_SESSION_NAME = os.getenv("DEFAULT_SESSION_NAME", "Default Session")
 SEARCH_RESULT_LIMIT = int(os.getenv("SEARCH_RESULT_LIMIT", "15"))
 COMPARE_RESULT_LIMIT = int(os.getenv("COMPARE_RESULT_LIMIT", "3"))
 
+# ─── Validation Patterns ──────────────────────────────────────────────────────
+EMAIL_VALIDATION_PATTERN = os.getenv("EMAIL_VALIDATION_PATTERN", r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$")
+
+
