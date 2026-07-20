@@ -43,7 +43,7 @@ NexusRAG is a visual playground and diagnostic sandbox designed to analyze, eval
 * [backend/src/clients/](file:///C:/Users/rehan/OneDrive/Desktop/Chunking%20Strategy%20Analyzer/backend/src/clients/): Integrations with external SDKs:
   * [embedding_client.py](file:///C:/Users/rehan/OneDrive/Desktop/Chunking%20Strategy%20Analyzer/backend/src/clients/embedding_client.py): Manages local sentence transformer models.
   * [gemini_client.py](file:///C:/Users/rehan/OneDrive/Desktop/Chunking%20Strategy%20Analyzer/backend/src/clients/gemini_client.py): Controls conversation title generation and SSE streaming.
-  * [prompts.py](file:///C:/Users/rehan/OneDrive/Desktop/Chunking%20Strategy%20Analyzer/backend/src/clients/prompts.py): System instructions for the financial analyst RAG role.
+  * [prompts.py](file:///C:/Users/rehan/OneDrive/Desktop/Chunking%20Strategy%20Analyzer/backend/src/clients/prompts.py): System instructions and chat thread title templates for the financial analyst RAG role.
 * [docker-compose.yml](file:///C:/Users/rehan/OneDrive/Desktop/Chunking%20Strategy%20Analyzer/docker-compose.yml): Coordinates the PostgreSQL database, Qdrant vector database, and FastAPI web container stack.
 
 ---

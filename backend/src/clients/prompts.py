@@ -15,4 +15,3 @@ Context:
 CONVERSATION_TITLE_PROMPT_TEMPLATE = """Generate a short, friendly, and concise title (3-5 words maximum) for a chat thread starting with the following query. Do not use quotes or markdown formatting, and return ONLY the title text itself:
 
 {question}"""
-
