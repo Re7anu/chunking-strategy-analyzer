@@ -2,7 +2,7 @@ from google import genai
 from google.genai import types
 
 from src.config.settings import GEMINI_API_KEY, CHAT_MODEL_NAME, CHAT_TEMPERATURE
-from src.prompts import RAG_SYSTEM_INSTRUCTION_TEMPLATE
+from src.clients.prompts import RAG_SYSTEM_INSTRUCTION_TEMPLATE, CONVERSATION_TITLE_PROMPT_TEMPLATE
 
 if not GEMINI_API_KEY:
     print("WARNING: GEMINI_API_KEY environment variable is not set!")
@@ -51,3 +51,23 @@ def get_chat_stream(question: str, context: str, history: list = None):
             temperature=CHAT_TEMPERATURE
         )
     )
+
+def generate_conversation_title(question: str) -> str:
+    """
+    Generates a concise 3-5 word conversation title from the first question.
+    """
+    try:
+        prompt = CONVERSATION_TITLE_PROMPT_TEMPLATE.format(question=question)
+        response = client.models.generate_content(
+            model=CHAT_MODEL_NAME,
+            contents=prompt
+        )
+        title = response.text.strip().replace('"', '').replace("'", "")
+        # Truncate if model hallucinates a long paragraph
+        if len(title) > 40:
+            title = title[:37] + "..."
+        return title if title else "New Chat"
+    except Exception as e:
+        print(f"Error auto-generating conversation title: {e}")
+        # Fallback to simple truncation
+        return question[:25] + "..." if len(question) > 25 else question

@@ -16,6 +16,7 @@ from src.db.user_store import (
     create_session,
     delete_session,
 )
+from src.auth.validators import validate_registration
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -28,6 +29,9 @@ def register(body: RegisterRequest):
     POST /api/auth/register
     Creates a new user with a bcrypt-hashed password, opens a session, and returns a JWT.
     """
+    # Run constraints validation
+    validate_registration(body)
+
     # Check for duplicate email
     if get_user_by_email(body.email):
         raise HTTPException(

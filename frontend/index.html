@@ -3,11 +3,11 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>NexusRAG — Customer Support Hub & Chunker Analyzer</title>
-  <!-- Google Fonts: Outfit and Inter -->
+  <title>NexusRAG — Institutional Financial Analyzer & Chunker</title>
+  <!-- Google Fonts: Playfair Display, DM Sans, JetBrains Mono -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,100..1000;1,9..40,100..1000&family=Playfair+Display:ital,wght@0,400..900;1,400..900&family=JetBrains+Mono:ital,wght@0,100..800;1,100..800&display=swap" rel="stylesheet">
   <!-- FontAwesome Icons -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
   <!-- Custom Sleek Styling -->
@@ -16,6 +16,40 @@
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 </head>
 <body>
+
+  <!-- Authentication Overlay -->
+  <div id="auth-overlay" class="auth-overlay" style="display: none;">
+    <div class="auth-card">
+      <div class="auth-header">
+        <i class="fa-solid fa-building-columns auth-logo" style="color: var(--accent-color);"></i>
+        <h2>Welcome to NexusRAG</h2>
+        <p id="auth-subtitle">Login to access your Financial RAG Sandbox</p>
+      </div>
+      
+      <form id="auth-form-ui">
+        <div class="form-group" id="username-group-ui" style="display: none;">
+          <label for="auth-username">Username</label>
+          <input type="text" id="auth-username" placeholder="Choose a username">
+        </div>
+        <div class="form-group">
+          <label for="auth-email">Email Address</label>
+          <input type="email" id="auth-email" placeholder="name@company.com" required>
+        </div>
+        <div class="form-group">
+          <label for="auth-password">Password</label>
+          <input type="password" id="auth-password" placeholder="••••••••" required>
+        </div>
+        
+        <button type="submit" class="auth-submit-btn" id="auth-btn-ui">Login</button>
+      </form>
+      
+      <div class="auth-toggle-text">
+        <span id="auth-toggle-prompt">Don't have an account?</span>
+        <a href="#" id="auth-toggle-link" class="auth-toggle-link">Register here</a>
+      </div>
+      <div class="auth-error-msg" id="auth-error-msg" style="display: none;"></div>
+    </div>
+  </div>
 
   <!-- Background Glowing Orbs -->
   <div class="glow-orb orb-1"></div>
@@ -52,12 +86,36 @@
         </button>
       </nav>
 
+      <!-- New Chat Action Button -->
+      <div class="sidebar-action-container">
+        <button id="new-chat-btn" class="new-chat-btn">
+          <i class="fa-solid fa-plus"></i>
+          <span>New Chat</span>
+        </button>
+      </div>
+
+      <!-- Chat History Section -->
+      <div class="chat-history-section">
+        <div class="chat-history-label">Recent Chats</div>
+        <div id="sidebar-threads-list" class="sidebar-threads-list">
+          <!-- Dynamically populated thread-items -->
+        </div>
+      </div>
+
       <div class="sidebar-footer">
+        <div class="user-profile-panel" id="user-profile-panel">
+          <div class="user-profile-row">
+            <div class="user-profile-info">
+              <i class="fa-solid fa-circle-user user-profile-icon"></i>
+              <span id="sidebar-username" class="sidebar-username">User</span>
+            </div>
+            <button id="sidebar-logout-btn" class="icon-btn" title="Log Out"><i class="fa-solid fa-right-from-bracket"></i></button>
+          </div>
+        </div>
         <div class="db-status">
           <div class="status-indicator online"></div>
           <span>Database Connected</span>
         </div>
-        <p class="footer-details">PostgreSQL + pgvector (384d)</p>
       </div>
     </aside>
 
@@ -65,11 +123,14 @@
     <main class="workspace">
       
       <!-- TAB 1: STREAMING CHAT -->
-      <section id="chat-tab" class="tab-content active">
+      <section id="chat-tab" class="tab-content active chat-tab-section">
         <header class="workspace-header">
           <div>
-            <h1>Customer Support Agent</h1>
-            <p class="section-desc">Test support streaming. Context is retrieved dynamically using PostgreSQL Reciprocal Rank Fusion.</p>
+            <div class="workspace-title-row">
+              <h1 id="chat-thread-title">Financial Audit Workspace</h1>
+              <button id="edit-thread-title-btn" class="rename-thread-btn" title="Rename Chat"><i class="fa-solid fa-pen"></i></button>
+            </div>
+            <p class="section-desc">Query institutional financial records. Scope searches using the attached documents checklist.</p>
           </div>
           <div class="header-actions">
             <div class="selector-group">
@@ -82,26 +143,54 @@
                 <option value="page-based">Page-Based Chunks</option>
               </select>
             </div>
+            <div class="selector-group">
+              <label for="chat-year-select"><i class="fa-solid fa-calendar-days"></i> Year:</label>
+              <select id="chat-year-select" class="theme-select">
+                <option value="all">All Years</option>
+                <option value="2026">2026</option>
+                <option value="2025">2025</option>
+                <option value="2024">2024</option>
+                <option value="2023">2023</option>
+              </select>
+            </div>
+            <div class="selector-group">
+              <label for="chat-quarter-select"><i class="fa-solid fa-clock"></i> Quarter:</label>
+              <select id="chat-quarter-select" class="theme-select">
+                <option value="all">All Quarters</option>
+                <option value="Q1">Q1</option>
+                <option value="Q2">Q2</option>
+                <option value="Q3">Q3</option>
+                <option value="Q4">Q4</option>
+                <option value="FY">FY</option>
+              </select>
+            </div>
+
+            <button class="attach-doc-btn" id="attach-doc-btn">
+              <i class="fa-solid fa-paperclip attach-doc-btn-icon"></i>
+              <span>Attach Document</span>
+            </button>
             <button class="clear-chat-btn" id="clear-chat"><i class="fa-solid fa-trash-can"></i> Clear Chat</button>
           </div>
         </header>
+
+        <div id="attached-docs-list" class="attached-docs-bar">
+          <!-- Dynamically populated attached doc pills -->
+        </div>
 
         <div class="chat-container">
           <div class="chat-messages" id="chat-messages">
             <!-- Welcome message -->
             <div class="message model">
-              <div class="message-avatar">
-                <i class="fa-solid fa-robot"></i>
-              </div>
+              <div class="message-avatar">FA</div>
               <div class="message-bubble">
-                <p>Hello! I am your <strong>NexusRAG</strong> Customer Support Bot. Ingest documentation, and ask me anything. I will answer based strictly on the retrieved knowledge base.</p>
+                <p>Welcome to <strong>NexusRAG</strong>. Ingest financial disclosures, statements, or PDF documentation, and query the assistant to generate audited reports based on scope.</p>
               </div>
             </div>
           </div>
 
           <div class="chat-input-area">
             <form id="chat-form">
-              <input type="text" id="chat-input" placeholder="Ask a support question... (e.g. How do I cancel my plan?)" autocomplete="off" required>
+              <input type="text" id="chat-input" placeholder="Query financial records... (e.g. What was the net income in Q3 2025?)" autocomplete="off" required>
               <button type="submit" id="chat-submit-btn" class="send-btn">
                 <i class="fa-solid fa-paper-plane"></i>
               </button>
@@ -131,6 +220,21 @@
                   <option value="recursive">Recursive Chunks</option>
                   <option value="semantic">Semantic Chunks</option>
                   <option value="page-based">Page-Based Chunks</option>
+                </select>
+                <select id="search-year-select" class="theme-select search-select">
+                  <option value="all">All Years</option>
+                  <option value="2026">2026</option>
+                  <option value="2025">2025</option>
+                  <option value="2024">2024</option>
+                  <option value="2023">2023</option>
+                </select>
+                <select id="search-quarter-select" class="theme-select search-select">
+                  <option value="all">All Quarters</option>
+                  <option value="Q1">Q1</option>
+                  <option value="Q2">Q2</option>
+                  <option value="Q3">Q3</option>
+                  <option value="Q4">Q4</option>
+                  <option value="FY">FY</option>
                 </select>
                 <button type="submit" class="search-submit-btn">Run Search</button>
               </div>
@@ -176,6 +280,25 @@
                 <div class="form-group">
                   <label for="ingest-category">Category</label>
                   <input type="text" id="ingest-category" placeholder="e.g. Billing, Accounts, Technical">
+                </div>
+              </div>
+
+              <div class="form-row-grid">
+                <div class="form-group">
+                  <label for="ingest-year">Fiscal Year (Optional)</label>
+                  <input type="number" id="ingest-year" placeholder="e.g. 2025" min="2000" max="2100">
+                </div>
+
+                <div class="form-group">
+                  <label for="ingest-quarter">Quarter (Optional)</label>
+                  <select id="ingest-quarter" class="theme-select form-select">
+                    <option value="">None / Auto-Detect</option>
+                    <option value="Q1">Q1</option>
+                    <option value="Q2">Q2</option>
+                    <option value="Q3">Q3</option>
+                    <option value="Q4">Q4</option>
+                    <option value="FY">Full Year (FY)</option>
+                  </select>
                 </div>
               </div>
 
@@ -357,6 +480,21 @@
               <div class="search-input-group">
                 <i class="fa-solid fa-code-compare search-icon"></i>
                 <input type="text" id="compare-input" placeholder="Type a query to run a side-by-side comparative retrieval analysis..." required>
+                <select id="compare-year-select" class="theme-select search-select">
+                  <option value="all">All Years</option>
+                  <option value="2026">2026</option>
+                  <option value="2025">2025</option>
+                  <option value="2024">2024</option>
+                  <option value="2023">2023</option>
+                </select>
+                <select id="compare-quarter-select" class="theme-select search-select">
+                  <option value="all">All Quarters</option>
+                  <option value="Q1">Q1</option>
+                  <option value="Q2">Q2</option>
+                  <option value="Q3">Q3</option>
+                  <option value="Q4">Q4</option>
+                  <option value="FY">FY</option>
+                </select>
                 <button type="submit" class="search-submit-btn compare-btn">Analyze Strategies</button>
               </div>
             </form>
@@ -417,6 +555,60 @@
 
   </div>
 
-  <script src="app.js"></script>
+  <!-- Attach Document Library Modal -->
+  <div id="attach-modal" class="modal-overlay">
+    <div class="modal-card" style="max-width: 500px;">
+      <div class="modal-header">
+        <h3 class="modal-title"><i class="fa-solid fa-paperclip modal-title-accent"></i> Attach Context Documents</h3>
+        <button id="close-attach-modal" class="modal-close-btn" title="Close Modal">&times;</button>
+      </div>
+      <p class="modal-body-text">
+        Toggle which uploaded documents are attached to this specific chat thread. Queries sent in this chat will search strictly within the attached records.
+      </p>
+      <div id="modal-library-list" class="modal-library-list">
+        <!-- Dynamically loaded documents checkboxes -->
+      </div>
+    </div>
+  </div>
+
+  <!-- Logout Confirmation Modal -->
+  <div id="logout-confirm-modal" class="modal-overlay">
+    <div class="modal-card" style="max-width: 400px;">
+      <div class="modal-header">
+        <h3 class="modal-title modal-title-danger"><i class="fa-solid fa-right-from-bracket"></i> Confirm Logout</h3>
+      </div>
+      <p class="modal-body-text-lg">
+        Are you sure you want to log out of your session?
+      </p>
+      <div class="modal-footer">
+        <button id="logout-cancel-btn" class="modal-cancel-btn">Cancel</button>
+        <button id="logout-confirm-btn" class="modal-danger-btn">Log Out</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Rename Thread Modal -->
+  <div id="rename-thread-modal" class="modal-overlay">
+    <div class="modal-card" style="max-width: 400px;">
+      <div class="modal-header">
+        <h3 class="modal-title modal-title-accent"><i class="fa-solid fa-pen"></i> Rename Conversation</h3>
+      </div>
+      <div class="modal-input-group">
+        <label for="rename-thread-input" class="modal-input-label">New Conversation Title</label>
+        <input type="text" id="rename-thread-input" class="modal-input">
+      </div>
+      <div class="modal-footer">
+        <button id="rename-cancel-btn" class="modal-cancel-btn">Cancel</button>
+        <button id="rename-confirm-btn" class="modal-confirm-btn">Save Title</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/state.js?v=1.6"></script>
+  <script src="/auth.js?v=1.6"></script>
+  <script src="/chat.js?v=1.6"></script>
+  <script src="/ingest.js?v=1.6"></script>
+  <script src="/sandbox.js?v=1.6"></script>
+  <script src="/app.js?v=1.6"></script>
 </body>
 </html>

@@ -21,3 +21,6 @@ __pycache__/
 # Database files & local logs
 *.log
 pgdata/
+
+# Local tests
+backend/src/tests/
