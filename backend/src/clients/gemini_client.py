@@ -2,7 +2,7 @@ from google import genai
 from google.genai import types
 
 from src.config.settings import GEMINI_API_KEY, CHAT_MODEL_NAME, CHAT_TEMPERATURE
-from src.clients.prompts import RAG_SYSTEM_INSTRUCTION_TEMPLATE
+from src.clients.prompts import RAG_SYSTEM_INSTRUCTION_TEMPLATE, CONVERSATION_TITLE_PROMPT_TEMPLATE
 
 if not GEMINI_API_KEY:
     print("WARNING: GEMINI_API_KEY environment variable is not set!")
@@ -57,11 +57,7 @@ def generate_conversation_title(question: str) -> str:
     Generates a concise 3-5 word conversation title from the first question.
     """
     try:
-        prompt = (
-            "Generate a short, friendly, and concise title (3-5 words maximum) "
-            "for a chat thread starting with the following query. Do not use quotes or markdown formatting, "
-            f"and return ONLY the title text itself:\n\n{question}"
-        )
+        prompt = CONVERSATION_TITLE_PROMPT_TEMPLATE.format(question=question)
         response = client.models.generate_content(
             model=CHAT_MODEL_NAME,
             contents=prompt
